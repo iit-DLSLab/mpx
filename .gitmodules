@@ -1,0 +1,3 @@
+[submodule "primal_dual_ilqr"]
+	path = primal_dual_ilqr
+	url = git@github.com:iit-DLSLab/primal_dual_ilqr.git
