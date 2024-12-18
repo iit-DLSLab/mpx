@@ -40,6 +40,10 @@ from mujoco.mjx._src import math
 import mujoco.viewer
 import matplotlib.pyplot as plt
 
+from gym_quadruped.quadruped_env import QuadrupedEnv
+import numpy as np
+import copy
+from gym_quadruped.utils.mujoco.visual import render_sphere
 # jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 # jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 # jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
@@ -47,6 +51,32 @@ import matplotlib.pyplot as plt
 
 gpu_device = jax.devices('gpu')[0]
 jax.default_device(gpu_device)
+
+robot_name = "aliengo"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
+scene_name = "flat"
+robot_feet_geom_names = dict(FR='FR',FL='FL', RR='RR' , RL='RL')
+robot_leg_joints = dict(FR=['FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint', ],
+                        FL=['FL_hip_joint', 'FL_thigh_joint', 'FL_calf_joint', ],
+                        RR=['RR_hip_joint', 'RR_thigh_joint', 'RR_calf_joint', ],
+                        RL=['RL_hip_joint', 'RL_thigh_joint', 'RL_calf_joint'])
+mpc_frequency = 100.0
+state_observables_names = tuple(QuadrupedEnv.ALL_OBS)  # return all available state observables
+
+sim_frequency = 1000.0
+
+env = QuadrupedEnv(robot=robot_name,
+                   hip_height=0.25,
+                   legs_joint_names=robot_leg_joints,  # Joint names of the legs DoF
+                   feet_geom_name=robot_feet_geom_names,  # Geom/Frame id of feet
+                   scene=scene_name,
+                   sim_dt = 1/sim_frequency,  # Simulation time step [s]
+                   ref_base_lin_vel=0.0, # Constant magnitude of reference base linear velocity [m/s]
+                   ground_friction_coeff=1.5,  # pass a float for a fixed value
+                   base_vel_command_type="human",  # "forward", "random", "forward+rotate", "human"
+                   state_obs_names=state_observables_names,  # Desired quantities in the 'state'
+                   )
+# breakpoint()
+obs = env.reset(random=False)
 
 class  timer_class :
     def __init__(self,duty_factor, step_freq, delta):
@@ -157,7 +187,7 @@ def refGenerator(timer_class,initial_state,input,param,terrain_height):
                 ref['foot'][3*leg:3+3*leg,k+1] = ref['foot'][3*leg:3+3*leg,k]
     reference = jnp.concatenate([ref['p'],ref['rpy'],ref['dp'],ref['omega']],axis=0)
     parameter = jnp.concatenate([contact.T,ref['foot'].T],axis=1)
-    return parameter,reference,terrain_height,foot_speed_out
+    return parameter,ref['foot'].T,terrain_height,foot_speed_out
 
 
 model_path = './data/aliengo.xml'
@@ -177,8 +207,8 @@ n_joints = len(joints_name)
 n_contact = len(contact_frame)
 
 # Problem dimensions
-N = 100  # Number of stages
-n =  13 + 2*n_joints  # Number of states (theta1, theta1_dot, theta2, theta2_dot)
+N = 50  # Number of stages
+n =  13 + 2*n_joints + 3*n_contact # Number of states (theta1, theta1_dot, theta2, theta2_dot)
 m = n_joints  # Number of controls (F)
 dt = 0.01  # Time step
 param = {}
@@ -199,8 +229,8 @@ p_legs0 = jnp.array([ 0.2717287,   0.13780001,  0.02074774,  0.2717287,  -0.1378
 print('leg:\n',p_legs0)
 param['foot_0'] = p_legs0
 
-model = mujoco.MjModel.from_xml_path(model_path)
-data = mujoco.MjData(model)
+model = env.mjModel
+data = env.mjData
 mjx_model = mjx.put_model(model)
 
 contact_id = []
@@ -237,7 +267,7 @@ beta = 2*np.sqrt(alpha)
 def dynamics(x, u, t, parameter):
 
     mjx_data = mjx.make_data(model)
-    mjx_data = mjx_data.replace(qpos = x[:n_joints+7], qvel = x[n_joints+7:])
+    mjx_data = mjx_data.replace(qpos = x[:n_joints+7], qvel = x[n_joints+7:2*n_joints+13])
 
     mjx_data = mjx.fwd_position(mjx_model, mjx_data)
     mjx_data = mjx.fwd_velocity(mjx_model, mjx_data)
@@ -260,11 +290,10 @@ def dynamics(x, u, t, parameter):
     J_RL, _ = mjx.jac(mjx_model, mjx_data, RL_leg, body_id[8])
     J_RR, _ = mjx.jac(mjx_model, mjx_data, RR_leg, body_id[11])
 
-
     J = jnp.concatenate([J_FL,J_FR,J_RL,J_RR],axis=1)
 
-    g = jnp.concatenate([FL_leg, FR_leg, RL_leg, RR_leg],axis = 0) - p_legs # z-coordinates
-    g_dot = J.T @ x[n_joints+7:]  # Velocity-level constraint violation
+    g = jnp.concatenate([FL_leg, FR_leg, RL_leg, RR_leg],axis = 0) - p_legs # position-level constraint violation
+    g_dot = J.T @ x[n_joints+7:13+2*n_joints]  # Velocity-level constraint violation
 
     # Stabilization term
     baumgarte_term = - 2*alpha * g_dot - beta * beta * g
@@ -283,27 +312,27 @@ def dynamics(x, u, t, parameter):
     # delta_J = jnp.concatenate([delta_J_FL,delta_J_FR,delta_J_RL,delta_J_RR],axis=1)
     # Jdot = (delta_J - J)/h
 
-    rhs = -J.T @ jax.scipy.linalg.cho_solve((M, False),tau - D) + baumgarte_term
+    rhs = -J.T @ jax.scipy.linalg.cho_solve((M, False),tau - D) + baumgarte_term #+ Jdot.T@x[n_joints+7:] 
     cho_JT_M_invJ = jax.scipy.linalg.cho_factor(JT_M_invJ)
     grf = jax.scipy.linalg.cho_solve(cho_JT_M_invJ,rhs)
-    v = x[n_joints+7:] + jax.scipy.linalg.cho_solve((M,False),tau - D + J@grf)*dt
+    grf = jnp.concatenate([grf[:3]*contact[0],grf[3:6]*contact[1],grf[6:9]*contact[2],grf[9:12]*contact[3]])
+    v = x[n_joints+7:13+2*n_joints] + jax.scipy.linalg.cho_solve((M,False),tau - D + J@grf)*dt
 
     # Semi-implicit Euler integration
     p = x[:3] + v[:3] * dt
     quat = math.quat_integrate(x[3:7], v[3:6], dt)
     q = x[7:7+n_joints] + v[6:6+n_joints] * dt
-    x_next = jnp.concatenate([p, quat, q, v])
+    x_next = jnp.concatenate([p, quat, q, v, grf])
 
     return x_next
 
 p0 = jnp.array([0, 0, 0.33])
 quat0 = jnp.array([1, 0, 0, 0])
-rpy0 = jnp.array([0, 0, 0])
 q0 = jnp.array([0,0.8,-1.8,0,0.8,-1.8,0,0.8,-1.8,0,0.8,-1.8])
-x0 = jnp.concatenate([p0, quat0,q0, jnp.zeros(6+n_joints)])
+x0 = jnp.concatenate([p0, quat0,q0, jnp.zeros(6+n_joints),jnp.zeros(3*n_contact)])
 grf0 = jnp.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 
-p_ref = jnp.array([0, 0, 0.4])
+p_ref = jnp.array([0, 0, 0.36])
 quat_ref = jnp.array([1, 0, 0, 0])
 rpy_ref = jnp.array([0, 0, 0])
 q_ref = jnp.array([0, 0.8, -1.8, 0, 0.8, -1.8, 0, 0.8, -1.8, 0, 0.8, -1.8])
@@ -316,17 +345,16 @@ tau_ref = jnp.zeros(n_joints)
 
 u_ref = jnp.concatenate([tau_ref])
 
-Qp = jnp.diag(jnp.array([100, 100, 1000]))
-Qq = jnp.diag(jnp.ones(n_joints)) * 1e2
-Qdp = jnp.diag(jnp.array([100, 100, 100]))
+Qp = jnp.diag(jnp.array([1, 1, 1e4]))
+Qq = jnp.diag(jnp.ones(n_joints)) * 5e0
+Qdp = jnp.diag(jnp.array([1, 1, 1]))*1e3
 Qomega = jnp.diag(jnp.array([10, 10, 10]))
-Qdq = jnp.diag(jnp.ones(n_joints)) * 1e-2
+Qdq = jnp.diag(jnp.ones(n_joints)) * 1e-1
 Rgrf = jnp.diag(jnp.ones(3 * n_contact)) * 1e-3
-Qquat = jnp.diag(jnp.ones(4)) * 1e-1
-Qrpy = jnp.diag(jnp.array([100,100,0]))
+Qrot = jnp.diag(jnp.array([500,500,0]))
 Qtau = jnp.diag(jnp.ones(n_joints)) * 1e-1
-Qleg = jnp.diag(jnp.ones(12)) * 0
-
+Qleg = jnp.diag(jnp.tile(jnp.array([1e3,1e3,1e3]),n_contact))
+Qpenalty = jnp.diag(jnp.ones(5*n_contact)) * 1
 # Define the cost function
 @jax.jit
 def cost(x, u, t, reference):
@@ -336,8 +364,8 @@ def cost(x, u, t, reference):
     q = x[7:7+n_joints]
     dp = x[7+n_joints:10+n_joints]
     omega = x[10+n_joints:13+n_joints]
-    dq = x[13+n_joints:]
-    # grf = u[n_joints:]
+    dq = x[13+n_joints:13+2*n_joints]
+    grf = x[13+2*n_joints:]
     tau = u[:n_joints]
 
     p_ref = reference[t,:3]
@@ -345,12 +373,11 @@ def cost(x, u, t, reference):
     q_ref = reference[t,7:7+n_joints]
     dp_ref = reference[t,7+n_joints:10+n_joints]
     omega_ref = reference[t,10+n_joints:13+n_joints]
-    # dq_ref = reference[t,13+n_joints:]
+    p_leg_ref = reference[t,13+n_joints:]
     mjx_data = mjx.make_data(model)
-    mjx_data = mjx_data.replace(qpos = x[:n_joints+7], qvel = x[n_joints+7:])
+    mjx_data = mjx_data.replace(qpos = x[:n_joints+7], qvel = x[n_joints+7:13+2*n_joints])
 
     mjx_data = mjx.fwd_position(mjx_model, mjx_data)
-    # mjx_data = mjx.fwd_velocity(mjx_model, mjx_data)
 
     FL_leg = mjx_data.geom_xpos[contact_id[0]]
     FR_leg = mjx_data.geom_xpos[contact_id[1]]
@@ -359,9 +386,27 @@ def cost(x, u, t, reference):
 
     p_leg = jnp.concatenate([FL_leg,FR_leg,RL_leg,RR_leg],axis=0)
 
-    stage_cost = (p - p_ref).T @ Qp @ (p - p_ref) +  (q - q_ref).T @ Qq @ (q - q_ref) + \
-                 (dp - dp_ref).T @ Qdp @ (dp - dp_ref) + (omega - omega_ref).T @ Qomega @ (omega - omega_ref) + \
-                 dq.T @ Qdq @ dq + tau.T @ Qtau @ tau
+    # J_FL, _ = mjx.jac(mjx_model, mjx_data, FL_leg, body_id[2])
+    # J_FR, _ = mjx.jac(mjx_model, mjx_data, FR_leg, body_id[5])
+    # J_RL, _ = mjx.jac(mjx_model, mjx_data, RL_leg, body_id[8])
+    # J_RR, _ = mjx.jac(mjx_model, mjx_data, RR_leg, body_id[11])
+
+    # J = jnp.concatenate([J_FL,J_FR,J_RL,J_RR],axis=1) 
+    #impose the friction cone constraint as a penalty at the torque level
+
+    mu = 0.4
+    friction_cone = jnp.array([[0,0,1],[-1,0,mu],[1,0,mu],[0,-1,mu],[0,1,mu]])
+    friction_cone = jnp.kron(jnp.eye(n_contact), friction_cone)
+    friction_cone = friction_cone @ grf
+    alpha = 0.1
+    #use ln(1+exp(x)) as a smooth approximation of max(0,x)
+    friction_cone = 1/alpha*(jnp.log1p(jnp.exp(-alpha*friction_cone)))
+
+    stage_cost = (p - p_ref).T @ Qp @ (p - p_ref) +  (q - q_ref).T @ Qq @ (q - q_ref) + math.quat_sub(quat,quat_ref).T@Qrot@math.quat_sub(quat,quat_ref) +\
+                 (dp - dp_ref).T @ Qdp @ (dp - dp_ref) + (omega - omega_ref).T @ Qomega @ (omega - omega_ref) + dq.T @ Qdq @ dq +\
+                 tau.T @ Qtau @ tau+\
+                 friction_cone.T @ Qpenalty @ friction_cone+\
+                (p_leg - p_leg_ref).T @ Qleg @ (p_leg - p_leg_ref)
     term_cost = (p - p_ref).T @ Qp @ (p - p_ref) + (dp-dp_ref).T @ Qdp @ (dp-dp_ref) + (omega-omega_ref).T @ Qomega @ (omega-omega_ref)
 
 
@@ -371,70 +416,10 @@ def cost(x, u, t, reference):
 U0 = jnp.tile(u_ref, (N, 1))
 X0 = jnp.tile(x0, (N + 1, 1))
 V0 = jnp.zeros((N + 1, n ))
-reference = jnp.tile(jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref]), (N + 1, 1))
+reference = jnp.tile(jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref,p_legs0]), (N + 1, 1))
 parameter = jnp.tile(jnp.concatenate([jnp.ones(4),p_legs0]),(N+1,1))
 
 from timeit import default_timer as timer
-
-
-# # # Integrate the dynamics using the initial condition and U_ref
-res = np.zeros((n, N + 1))
-res_old = x0
-import time
-# Create a Mujoco viewer instance
-# with mujoco.viewer.launch_passive(model, data) as viewer:
-#     while viewer.is_running():
-#         res = dynamics(res_old, u_ref, 0, parameter)
-#         data.qpos[:] = res[:7+n_joints]
-#         data.qvel[:] = res[7+n_joints]
-#         mujoco.mj_step(model, data)
-#         viewer.sync()
-#         FL_leg = data.geom_xpos[contact_id[0]]
-#         FR_leg = data.geom_xpos[contact_id[1]]
-#         RL_leg = data.geom_xpos[contact_id[2]]
-#         RR_leg = data.geom_xpos[contact_id[3]]
-#         pd = 10*(q0-res[7:n_joints+7]) + 2*(-res[13+n_joints:])
-#         J_FL = np.zeros((3,18))
-#         J_FR = np.zeros((3,18))
-#         J_RL = np.zeros((3,18))
-#         J_RR = np.zeros((3,18))
-#         Ja = np.zeros((3,18))
-#         mujoco.mj_jac(model, data,J_FL,Ja, FL_leg, body_id[2])
-#         mujoco.mj_jac(model, data,J_FR,Ja, FR_leg, body_id[5])
-#         mujoco.mj_jac(model, data,J_RL,Ja, RL_leg, body_id[8])
-#         mujoco.mj_jac(model, data,J_RR,Ja, RR_leg, body_id[11])
-#         J = np.concatenate([J_FL,J_FR,J_RL,J_RR],axis=0)
-#         res_old = res
-#         tau_grf = J.T@np.array([0,0,55,0,0,55,0,0,55,0,0,55])
-#         u_ref = -tau_grf[6:]
-
-#         time.sleep(dt*10)
-
-
-# for i in range(N):
-
-#     viewer.render()
-
-# viewer.close()
-# # Plot the linear position (p)
-# plt.figure(figsize=(12, 8))
-# for i in range(3):
-#     plt.plot(res[i, :], label=f'p {i+1}')
-# plt.xlabel('Time step')
-# plt.ylabel('Position')
-# plt.legend()
-# plt.grid(True)
-
-# # Plot the linear velocity (dp)
-# plt.figure(figsize=(12, 8))
-# for i in range(3):
-#     plt.plot(res[7 + n_joints + i, :], label=f'dp {i+1}')
-# plt.xlabel('Time step')
-# plt.ylabel('Velocity')
-# plt.legend()
-# plt.grid(True)
-# plt.show()
-
 
 @jax.jit
 def work(reference,parameter,x0,X0,U0,V0):
@@ -451,155 +436,11 @@ def work(reference,parameter,x0,X0,U0,V0):
 
 # Vectorize the work function to solve multiple instances in parallel
 # Solve in parallel
-start = timer()
-X,U,V, g, c =  work(reference,parameter,x0,X0,U0,V0)
-end = timer()
-print(f"Compilation time: {end-start}")
-#calculate the jacobian of the work function
 # start = timer()
-# X,U,V, g, c =  work_jac(reference,parameter,x0,X0,U0,V0)
+# X,U,V, g, c =  work(reference,parameter,x0,X0,U0,V0)
 # end = timer()
-# print(f"Execution time: {end-start}")
-# work_vmap = jax.vmap(work, in_axes=(0,0,0,0,0,0))
-# work_vmap_jit = jax.jit(work_vmap)
-# times = []
-# for batch_size in [2,4,8,16,32,64,128,256,512,1024]:
-#     # Generate different initial states x0 for the batch
-#     print(batch_size)
-#     key = jax.random.PRNGKey(0)
-#     x0_batch = jnp.array([x0 + jax.random.normal(key, shape=x0.shape) * 0.01 for _ in range(batch_size)])
-#     # Initialize instances of X0 and U0
-#     X0_batch = jnp.tile(X0, (batch_size, 1, 1))
-#     U0_batch = jnp.tile(U0, (batch_size, 1, 1))
-#     V0_batch = jnp.tile(V0, (batch_size, 1, 1))
-#     reference_batch = jnp.tile(reference, (batch_size, 1, 1))
-#     parameter_batch = jnp.tile(parameter, (batch_size, 1, 1))
+# print(f"Compilation time: {end-start}")
 
-#     X_batch, U_batch, V_batch, temp1 , temp2 = work_vmap_jit(reference_batch, parameter_batch, x0_batch, X0_batch, U0_batch,V0_batch)
-# #
-#     start = timer()
-#     X_batch, U_batch, V_batch, temp1 , temp2 = work_vmap_jit(reference_batch,parameter_batch,x0_batch, X0_batch, U0_batch,V0_batch)
-#     X_batch.block_until_ready()
-#     end = timer()
-#     times.append((end - start))
-# # Plot the times over the batch size
-# batch_sizes = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
-# plt.figure(figsize=(12, 8))
-# plt.plot(batch_sizes, times, marker='o')
-# plt.xlabel('Batch Size')
-# plt.ylabel('Execution Time (seconds)')
-# plt.title('Execution Time vs Batch Size')
-# plt.xscale('log')
-# plt.yscale('log')
-# plt.grid(True)
-# plt.show()
-
-# print("aaaaa",delta_time)
-# Extract the first solution for further use
-# X, U, V, num_iterations, g, c, no_errors = X_batch[0], U_batch[0], V_batch[0], num_iterations_batch[0], g_batch[0], c_batch[0], no_errors_batch[0]
-# print(f"{num_iterations=}, {g=}, {no_errors=}")
-# #INTEGRATE THE DYNAMICS
-# res = np.zeros((n,N+1))
-# res[:,0] = x0
-# for i in range(N+1):
-#     x0 = dynamics(x0,U[i,:],i)
-#     # x0 = dynamics(x0,u_ref,i)
-#     # print(U[i,:])
-#     res[:,i] = x0
-# import matplotlib.pyplot as plt
-
-# # Plot the control inputs (U)
-# plt.figure(figsize=(12, 8))
-# for i in range(3):
-#     plt.plot(res[i, :], label=f'p {i+1}')
-# plt.xlabel('Time step')
-# plt.ylabel('position')
-# plt.legend()
-# plt.grid(True)
-# #plot quaternion
-# plt.figure(figsize=(12, 8))
-# # rpy = np.zeros((3,N+1))
-# # for i in range(N+1):
-# #     rpy[:,i] = Rotation.from_quat(res[3:7,i]).as_euler('xyz', degrees=True)
-# for i in range(3):
-#     plt.plot(res[i+3,:], label=f'eul {i+1}')
-# plt.xlabel('Time step')
-# plt.ylabel('eurler')
-# plt.legend()
-# plt.grid(True)
-# #plot control
-# plt.figure(figsize=(12, 8))
-# for i in range(12):
-#     plt.plot(U[:,i+12], label=f'u {i+1}')
-# plt.show()
-
-
-# Plot the reference control inputs (u_ref)
-# plt.figure(figsize=(12, 8))
-# for i in range(3*n_contact):
-#     plt.plot(U[:, n_joints+i], label=f'grf {i+1}')
-# plt.xlabel('Time step')
-# plt.ylabel('GRF')
-# plt.legend()
-# plt.grid(True)
-plt.figure(figsize=(12, 8))
-for i in range(n_joints):
-    plt.plot(U[:, i], label=f'torque {i+1}')
-plt.xlabel('Time step')
-plt.ylabel('Torque')
-plt.legend()
-plt.grid(True)
-print(U)
-# Plot the linear position (p)
-plt.figure(figsize=(12, 8))
-for i in range(3):
-    plt.plot(X[:, i], label=f'p {i+1}')
-plt.xlabel('Time step')
-plt.ylabel('Position')
-plt.legend()
-plt.grid(True)
-
-# Plot the linear velocity (dp)
-plt.figure(figsize=(12, 8))
-for i in range(3):
-    plt.plot(X[:, 7+n_joints+i], label=f'dp {i+1}')
-plt.xlabel('Time step')
-plt.ylabel('Velocity')
-plt.legend()
-plt.grid(True)
-plt.show()
-
-from gym_quadruped.quadruped_env import QuadrupedEnv
-import numpy as np
-import copy
-
-
-
-robot_name = "aliengo"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
-scene_name = "flat"
-robot_feet_geom_names = dict(FR='FR',FL='FL', RR='RR' , RL='RL')
-robot_leg_joints = dict(FR=['FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint', ],
-                        FL=['FL_hip_joint', 'FL_thigh_joint', 'FL_calf_joint', ],
-                        RR=['RR_hip_joint', 'RR_thigh_joint', 'RR_calf_joint', ],
-                        RL=['RL_hip_joint', 'RL_thigh_joint', 'RL_calf_joint'])
-mpc_frequency = 100.0
-state_observables_names = tuple(QuadrupedEnv.ALL_OBS)  # return all available state observables
-
-sim_frequency = 1000.0
-
-env = QuadrupedEnv(robot=robot_name,
-                   hip_height=0.25,
-                   legs_joint_names=robot_leg_joints,  # Joint names of the legs DoF
-                   feet_geom_name=robot_feet_geom_names,  # Geom/Frame id of feet
-                   scene=scene_name,
-                   sim_dt = 1/sim_frequency,  # Simulation time step [s]
-                   ref_base_lin_vel=0.0, # Constant magnitude of reference base linear velocity [m/s]
-                   ground_friction_coeff=1.5,  # pass a float for a fixed value
-                   base_vel_command_type="human",  # "forward", "random", "forward+rotate", "human"
-                   state_obs_names=state_observables_names,  # Desired quantities in the 'state'
-                   )
-# breakpoint()
-obs = env.reset(random=False)
 env.render()
 t = timer_class(duty_factor=0.6,step_freq= 1.5,delta=[0000.5,0000.0,0000,0000.5])
 t_sim = copy.deepcopy(t)
@@ -611,18 +452,18 @@ input = {}
 Kp = 10
 Kd = 2
 
-Kp_c = 500
-Kd_c = 5
 counter = 0
-
-
+ids = []
+for i in range(N):
+     ids.append(render_sphere(viewer=env.viewer,
+              position = np.array([0,0,0]),
+              diameter = 0.01,
+              color=[1,0,0,1]))
 
 while True:
 
     qpos = env.mjData.qpos
     qvel = env.mjData.qvel
-    # qpos = X[1,:n_joints+7]
-    # qvel = X[1,n_joints+7:]
     if counter % (sim_frequency / mpc_frequency) == 0 or counter == 0:
 
         foot_op = np.array([env.feet_pos('world').FL, env.feet_pos('world').FR, env.feet_pos('world').RL, env.feet_pos('world').RR],order="F")
@@ -640,8 +481,8 @@ while True:
 
         rpy = env.base_ori_euler_xyz.copy()
         foot_op_vec = foot_op.flatten()
-        x0 = jnp.concatenate([qpos, qvel])
-
+        x0 = jnp.concatenate([qpos, qvel,np.zeros(3*n_contact)])
+        
         init['p'] = p
         init['q'] = q
         init['dp'] = dp
@@ -653,32 +494,35 @@ while True:
         input['des_speeds'] = np.array([ref_base_lin_vel[0],ref_base_lin_vel[1],ref_base_lin_vel[2]])
         input['des_height'] = 0.36
 
-        _ , _, terrain_height, foot_ref_dot = refGenerator(timer_class = t,initial_state = init,input = input,param=param, terrain_height=terrain_height)
+        parameter, foot_ref, terrain_height, foot_ref_dot = refGenerator(timer_class = t,initial_state = init,input = input,param=param, terrain_height=terrain_height)
 
-        # reference = jnp.tile(jnp.concatenate([p_ref, rpy_ref, ref_base_lin_vel, ref_base_ang_vel]), (N + 1, 1))
+        reference = jnp.tile(jnp.concatenate([p_ref, quat_ref,q0, ref_base_lin_vel, ref_base_ang_vel]), (N + 1, 1))
+        reference = jnp.concatenate([reference,foot_ref],axis=1)
         start = timer()
         X,U,V, _,c =  work(reference,parameter,x0,X0,U0,V0)
         X.block_until_ready()
         stop = timer()
         print(f"Execution time: {stop-start}")
-
-        U0 = U
-        X0 = X
-        V0 = V
+        # move the prediction one step forward
+        U0 = jnp.concatenate([U[1:],U[-1:]])
+        X0 = jnp.concatenate([X[1:],X[-1:]])
+        V0 = jnp.concatenate([V[1:],V[-1:]])
+        for i in range(N):
+            render_sphere(viewer=env.viewer,
+                      position = X[i,:3],
+                      diameter = 0.01,
+                      color=[1,0,0,1],
+                      geom_id = ids[i])
         tau = U[0,:n_joints]
-        print("tau: \n",tau)
-
-    # feet_jac = env.feet_jacobians(frame='world', return_rot_jac=False)
+        print('tau',tau)
     action = np.zeros(env.mjModel.nu)
-    # feet_jac = env.feet_jacobians(frame='world', return_rot_jac=False)
-    # action[env.legs_tau_idx.FL] = -(feet_jac['FL'].T @ (grf[:3]))[6:9]
-    # action[env.legs_tau_idx.FR] = -(feet_jac['FR'].T @ (grf[3:6]))[9:12]
-    # action[env.legs_tau_idx.RL] = -(feet_jac['RL'].T @ (grf[6:9]))[12:15]
-    # action[env.legs_tau_idx.RR] = -(feet_jac['RR'].T @ (grf[9:] ))[15:18]
-    # print("why not zeros: \n",action-tau)
+
     #PD
     # print(catisian_space_action.shape)
+    # env.mjData.qpos = res[:n_joints+7]
+    # env.mjData.qvel = res[n_joints+7:]
     state, reward, is_terminated, is_truncated, info = env.step(action=tau)
+    
     counter += 1
     if is_terminated:
         pass

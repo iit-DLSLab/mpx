@@ -419,8 +419,8 @@ input = {}
 Kp = 10
 Kd = 2
 
-Kp_c = 500
-Kd_c = 5
+Kp_c = 1000
+Kd_c = 20
 counter = 0
 
 
@@ -488,7 +488,8 @@ while True:
     action[env.legs_tau_idx.FR] = (feet_jac['FR'].T @ ((1-contact_op[1])*catisian_space_action[3:6]-grf_[3:6]))[9:12]
     action[env.legs_tau_idx.RL] = (feet_jac['RL'].T @ ((1-contact_op[2])*catisian_space_action[6:9]-grf_[6:9]))[12:15]
     action[env.legs_tau_idx.RR] = (feet_jac['RR'].T @ ((1-contact_op[3])*catisian_space_action[9:]-grf_[9:] ))[15:18]
-    state, reward, is_terminated, is_truncated, info = env.step(action=action)
+    tau_gravity = env.mjData.qfrc_bias[6:]
+    state, reward, is_terminated, is_truncated, info = env.step(action=action+tau_gravity)
     counter += 1
     if is_terminated:
         pass
