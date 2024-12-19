@@ -44,6 +44,7 @@ from gym_quadruped.quadruped_env import QuadrupedEnv
 import numpy as np
 import copy
 from gym_quadruped.utils.mujoco.visual import render_sphere
+from mujoco.mjx._src.dataclasses import PyTreeNode 
 # jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 # jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 # jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
@@ -77,43 +78,41 @@ env = QuadrupedEnv(robot=robot_name,
                    )
 # breakpoint()
 obs = env.reset(random=False)
-
-class  timer_class :
-    def __init__(self,duty_factor, step_freq, delta):
-        self.duty_factor = duty_factor
-        self.step_freq = step_freq
-        self.delta = delta
-        self.t = np.zeros(len(delta))
-        self.n_contact = len(delta)
-        self.init = [True]*len(delta)
-    def run(self,dt):
-        contact = np.zeros(self.n_contact)
-        for leg in range(self.n_contact):
-            if self.t[leg] == 1.0:
-                self.t[leg] = 0 #restart
-            self.t[leg] += dt*self.step_freq
-            if self.delta[leg] == -1:
-                contact[leg] = 0
-            else:
-                if self.init[leg] :
-                    if self.t[leg] < self.delta[leg]:
-                        contact[leg] = 1
-                    else :
-                        self.init[leg] = False
-                        contact[leg] = 1
-                        self.t[leg] = 0
-                else:
-                    if self.t[leg] < self.duty_factor:
-                        contact[leg] = 1
-                    else:
-                        contact[leg] = 0
-                if self.t[leg]>1 :
-                    self.t[leg] = 1
-        return contact
-    def set(self,t,init):
-        self.t = t
-        self.init = init
-    #add a restart function to make it usable to start and stop the motion
+class timer_data(PyTreeNode):
+    duty_factor: float
+    step_freq: float
+    delta: jnp.array
+    t: jnp.array
+    n_contact: int
+    init: jnp.array
+@jax.jit
+def timer_run(timer_data,dt):
+    contact = jnp.zeros(timer_data.n_contact)
+    leg_time = timer_data.t
+    delta = timer_data.delta
+    duty_factor = timer_data.duty_factor
+    init_flag = timer_data.init
+    def integrate(input):
+        leg_time,delta,init_flag = input
+        leg_time = jnp.where(leg_time == 1.0,0,leg_time)
+        leg_time = leg_time + dt*timer_data.step_freq
+        def init_operation(leg_time):
+            return 1 , leg_time < delta,jnp.where(leg_time < delta,leg_time,0)
+        def runtime_operation(leg_time):
+            return jnp.where(leg_time < duty_factor,1,0),False,leg_time
+        contact , init_flag , leg_time = jax.lax.cond(init_flag,init_operation, runtime_operation, leg_time)
+        leg_time = jnp.where(leg_time > 1.0,1.0,leg_time)
+        return contact, leg_time, init_flag
+    jax.debug.print("delta: {}",delta)
+    jax.debug.print("leg_time: {}",leg_time)
+    jax.debug.print("init_flag: {}",init_flag)
+    inputs = jnp.array([(leg_time[i], delta[i], init_flag[i]) for i in range(timer_data.n_contact)])
+    contact , leg_time, init_flag = jax.vmap(integrate)(inputs)
+    jax.debug.print("contact: {}",contact)
+    jax.debug.print("leg_time: {}",leg_time)
+    jax.debug.print("init_flag: {}",init_flag)
+    timer_data = timer_data.replace(t = leg_time,init = init_flag)
+    return contact , timer_data
 def refGenerator(timer_class,initial_state,input,param,terrain_height):
 
     n_contact = param["n_contact"]
@@ -188,8 +187,35 @@ def refGenerator(timer_class,initial_state,input,param,terrain_height):
     reference = jnp.concatenate([ref['p'],ref['rpy'],ref['dp'],ref['omega']],axis=0)
     parameter = jnp.concatenate([contact.T,ref['foot'].T],axis=1)
     return parameter,ref['foot'].T,terrain_height,foot_speed_out
+# @jax.jit
+# def reference_generator(timer_class,x,input):
+#     p = x[:3]
+#     quat = x[3:7]
+#     q = x[7:7+n_joints]
+#     dp = x[7+n_joints:10+n_joints]
+#     omega = x[10+n_joints:13+n_joints]
+#     dq = x[13+n_joints:13+2*n_joints]
+#     ref_base_lin_vel,ref_base_ang_vel, robot_height = input
+#     t , step_freq, duty_f, delay = timer
+#     p = jnp.array([p[0], p[1], robot_height])
+#     p_ref = jnp.arange(N+1)*dt*ref_base_lin_vel + p
+#     quat_ref = jnp.tile(jnp.array([1,0,0,0]),(N+1,1))
+#     q_ref = jnp.tile(jnp.array([0,0.8,-1.8,0,0.8,-1.8,0,0.8,-1.8,0,0.8,-1.8]),(N+1,1)) 
+#     dp_ref = jnp.tile(ref_base_lin_vel,(N+1,1))
+#     omega_ref = jnp.tile(ref_base_ang_vel,(N+1,1))
+#     foot0 = jnp.tile(jnp.array([0.2717287,   0.13780001,  0.2717287,  -0.13780001, -0.20967132,  0.13780001, -0.20967132, -0.13780001]),(N+1,1))
+#     fh1 = 0.5*stance_time*dt*ref_base_lin_vel[:2]
+#     fh2 = jnp.sqrt(robot_height/9.81)*(dp[:2]-ref_base_lin_vel[:2])
+#     foothold = jnp.tile(fh1+fh2,4)+foot0
+#     for i in range(N+1):
+#         for leg in range(4):
+#             if jnp.sin((t[leg] + i*dt)*step_freq+delay[leg]) > :
+#                 foothold = jnp.tile(foot0,(N+1,1)) > 
+    
+    
 
 
+#     return ref
 model_path = './data/aliengo.xml'
 
 joints_name = ['FL_hip_joint', 'FL_thigh_joint', 'FL_calf_joint',
@@ -207,7 +233,7 @@ n_joints = len(joints_name)
 n_contact = len(contact_frame)
 
 # Problem dimensions
-N = 50  # Number of stages
+N = 100  # Number of stages
 n =  13 + 2*n_joints + 3*n_contact # Number of states (theta1, theta1_dot, theta2, theta2_dot)
 m = n_joints  # Number of controls (F)
 dt = 0.01  # Time step
@@ -243,8 +269,11 @@ print(contact_id)
 
 
 
-
-
+t = timer_data(duty_factor=0.6,step_freq= 1.35,delta=[0000.5,0000.0,0000,0000.5],t=jnp.zeros(4),n_contact=4,init=jnp.ones(4))
+contact, t = timer_run(t,0.01)
+for i in range(1000):
+    contact, t = timer_run(t,0.01)
+    print(contact)
 np.random.seed(0)
 
 
@@ -353,7 +382,7 @@ Qdq = jnp.diag(jnp.ones(n_joints)) * 1e-1
 Rgrf = jnp.diag(jnp.ones(3 * n_contact)) * 1e-3
 Qrot = jnp.diag(jnp.array([500,500,0]))
 Qtau = jnp.diag(jnp.ones(n_joints)) * 1e-1
-Qleg = jnp.diag(jnp.tile(jnp.array([1e3,1e3,1e3]),n_contact))
+Qleg = jnp.diag(jnp.tile(jnp.array([1e3,1e3,1e5]),n_contact))
 Qpenalty = jnp.diag(jnp.ones(5*n_contact)) * 1
 # Define the cost function
 @jax.jit
@@ -442,7 +471,7 @@ def work(reference,parameter,x0,X0,U0,V0):
 # print(f"Compilation time: {end-start}")
 
 env.render()
-t = timer_class(duty_factor=0.6,step_freq= 1.5,delta=[0000.5,0000.0,0000,0000.5])
+t = timer_data(duty_factor=0.6,step_freq= 1.5,delta=[0000.5,0000.0,0000,0000.5])
 t_sim = copy.deepcopy(t)
 terrain_height = np.zeros(n_contact)
 
@@ -514,7 +543,6 @@ while True:
                       color=[1,0,0,1],
                       geom_id = ids[i])
         tau = U[0,:n_joints]
-        print('tau',tau)
     action = np.zeros(env.mjModel.nu)
 
     #PD
