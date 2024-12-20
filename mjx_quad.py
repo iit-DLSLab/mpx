@@ -81,38 +81,27 @@ obs = env.reset(random=False)
 class timer_data(PyTreeNode):
     duty_factor: float
     step_freq: float
-    delta: jnp.array
     t: jnp.array
     n_contact: int
-    init: jnp.array
+
 @jax.jit
-def timer_run(timer_data,dt):
-    contact = jnp.zeros(timer_data.n_contact)
-    leg_time = timer_data.t
-    delta = timer_data.delta
-    duty_factor = timer_data.duty_factor
-    init_flag = timer_data.init
-    def integrate(input):
-        leg_time,delta,init_flag = input
-        leg_time = jnp.where(leg_time == 1.0,0,leg_time)
-        leg_time = leg_time + dt*timer_data.step_freq
-        def init_operation(leg_time):
-            return 1 , leg_time < delta,jnp.where(leg_time < delta,leg_time,0)
-        def runtime_operation(leg_time):
-            return jnp.where(leg_time < duty_factor,1,0),False,leg_time
-        contact , init_flag , leg_time = jax.lax.cond(init_flag,init_operation, runtime_operation, leg_time)
-        leg_time = jnp.where(leg_time > 1.0,1.0,leg_time)
-        return contact, leg_time, init_flag
-    jax.debug.print("delta: {}",delta)
-    jax.debug.print("leg_time: {}",leg_time)
-    jax.debug.print("init_flag: {}",init_flag)
-    inputs = jnp.array([(leg_time[i], delta[i], init_flag[i]) for i in range(timer_data.n_contact)])
-    contact , leg_time, init_flag = jax.vmap(integrate)(inputs)
-    jax.debug.print("contact: {}",contact)
-    jax.debug.print("leg_time: {}",leg_time)
-    jax.debug.print("init_flag: {}",init_flag)
-    timer_data = timer_data.replace(t = leg_time,init = init_flag)
-    return contact , timer_data
+def timer_run(timer, dt,contact):
+    # Extract relevant fields
+    leg_time = timer.t  # Shape: (n_contact,)
+    duty_factor = timer.duty_factor  # Scalar or broadcastable
+    step_freq = timer.step_freq  # Scalar or broadcastable
+    # Update timer
+    leg_time = leg_time + dt * timer.step_freq
+    leg_time = jnp.where(leg_time > 1, leg_time - 1, leg_time)
+    contact = jnp.where(leg_time < duty_factor, 1, 0)
+
+    # Explicitly return all modified data
+    new_timer_data = timer_data(duty_factor=duty_factor,step_freq = step_freq,t=leg_time,n_contact=timer.n_contact)
+
+    return contact, new_timer_data
+
+
+
 def refGenerator(timer_class,initial_state,input,param,terrain_height):
 
     n_contact = param["n_contact"]
@@ -269,10 +258,11 @@ print(contact_id)
 
 
 
-t = timer_data(duty_factor=0.6,step_freq= 1.35,delta=[0000.5,0000.0,0000,0000.5],t=jnp.zeros(4),n_contact=4,init=jnp.ones(4))
-contact, t = timer_run(t,0.01)
+t = timer_data(duty_factor=0.6,step_freq= 1.35,t=jnp.array([0000.5,0000.0,0000,0000.5]),n_contact=4)
+contact = jnp.zeros(n_contact)
+contact, t = timer_run(t,0.01,contact)
 for i in range(1000):
-    contact, t = timer_run(t,0.01)
+    contact, t = timer_run(t,0.01,contact)
     print(contact)
 np.random.seed(0)
 
