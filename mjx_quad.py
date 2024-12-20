@@ -78,27 +78,16 @@ env = QuadrupedEnv(robot=robot_name,
                    )
 # breakpoint()
 obs = env.reset(random=False)
-class timer_data(PyTreeNode):
-    duty_factor: float
-    step_freq: float
-    t: jnp.array
-    n_contact: int
 
 @jax.jit
-def timer_run(timer, dt,contact):
+def timer_run(duty_factor,step_freq, leg_time, dt):
     # Extract relevant fields
-    leg_time = timer.t  # Shape: (n_contact,)
-    duty_factor = timer.duty_factor  # Scalar or broadcastable
-    step_freq = timer.step_freq  # Scalar or broadcastable
     # Update timer
-    leg_time = leg_time + dt * timer.step_freq
+    leg_time = leg_time + dt * step_freq
     leg_time = jnp.where(leg_time > 1, leg_time - 1, leg_time)
     contact = jnp.where(leg_time < duty_factor, 1, 0)
 
-    # Explicitly return all modified data
-    new_timer_data = timer_data(duty_factor=duty_factor,step_freq = step_freq,t=leg_time,n_contact=timer.n_contact)
-
-    return contact, new_timer_data
+    return contact, leg_time
 
 
 
@@ -176,35 +165,42 @@ def refGenerator(timer_class,initial_state,input,param,terrain_height):
     reference = jnp.concatenate([ref['p'],ref['rpy'],ref['dp'],ref['omega']],axis=0)
     parameter = jnp.concatenate([contact.T,ref['foot'].T],axis=1)
     return parameter,ref['foot'].T,terrain_height,foot_speed_out
-# @jax.jit
-# def reference_generator(timer_class,x,input):
-#     p = x[:3]
-#     quat = x[3:7]
-#     q = x[7:7+n_joints]
-#     dp = x[7+n_joints:10+n_joints]
-#     omega = x[10+n_joints:13+n_joints]
-#     dq = x[13+n_joints:13+2*n_joints]
-#     ref_base_lin_vel,ref_base_ang_vel, robot_height = input
-#     t , step_freq, duty_f, delay = timer
-#     p = jnp.array([p[0], p[1], robot_height])
-#     p_ref = jnp.arange(N+1)*dt*ref_base_lin_vel + p
-#     quat_ref = jnp.tile(jnp.array([1,0,0,0]),(N+1,1))
-#     q_ref = jnp.tile(jnp.array([0,0.8,-1.8,0,0.8,-1.8,0,0.8,-1.8,0,0.8,-1.8]),(N+1,1)) 
-#     dp_ref = jnp.tile(ref_base_lin_vel,(N+1,1))
-#     omega_ref = jnp.tile(ref_base_ang_vel,(N+1,1))
-#     foot0 = jnp.tile(jnp.array([0.2717287,   0.13780001,  0.2717287,  -0.13780001, -0.20967132,  0.13780001, -0.20967132, -0.13780001]),(N+1,1))
-#     fh1 = 0.5*stance_time*dt*ref_base_lin_vel[:2]
-#     fh2 = jnp.sqrt(robot_height/9.81)*(dp[:2]-ref_base_lin_vel[:2])
-#     foothold = jnp.tile(fh1+fh2,4)+foot0
-#     for i in range(N+1):
-#         for leg in range(4):
-#             if jnp.sin((t[leg] + i*dt)*step_freq+delay[leg]) > :
-#                 foothold = jnp.tile(foot0,(N+1,1)) > 
-    
-    
+@jax.jit
+def reference_generator(t_timer,x,foot,input,duty_factor,step_freq,terrain_height,dt):
+    p = x[:3]
+    quat = x[3:7]
+    q = x[7:7+n_joints]
+    dp = x[7+n_joints:10+n_joints]
+    omega = x[10+n_joints:13+n_joints]
+    dq = x[13+n_joints:13+2*n_joints]
+    ref_base_lin_vel,ref_base_ang_vel, robot_height = input
+    p = jnp.array([p[0], p[1], robot_height])
+    p_ref = jnp.arange(N+1)*dt*ref_base_lin_vel + p
+    quat_ref = jnp.tile(jnp.array([1,0,0,0]),(N+1,1))
+    q_ref = jnp.tile(jnp.array([0,0.8,-1.8,0,0.8,-1.8,0,0.8,-1.8,0,0.8,-1.8]),(N+1,1)) 
+    dp_ref = jnp.tile(ref_base_lin_vel,(N+1,1))
+    omega_ref = jnp.tile(ref_base_ang_vel,(N+1,1))
+    # foot0 = jnp.tile(jnp.array([0.2717287,   0.13780001, 0.2717287,  -0.13780001, -0.20967132,  0.13780001, -0.20967132, -0.13780001]),(N+1,1))
+    # stance_time = duty_factor/step_freq
+    # fh1 = 0.5*stance_time*dt*ref_base_lin_vel[:2]
+    # fh2 = jnp.sqrt(robot_height/9.81)*(dp[:2]-ref_base_lin_vel[:2])
+    # foothold = jnp.tile(fh1+fh2,4)+foot0
+    # foot_ref = jnp.zeros((N+1,12))
+    t = t_timer
+    contact_sequence = jnp.zeros(((N+1),4))
 
+    def body_fn(n, carry):
+            new_t, contact_sequence = carry
+            new_contact_sequence, new_t = timer_run(duty_factor = duty_factor, step_freq = step_freq,leg_time=new_t, dt=dt)
+            contact_sequence = contact_sequence.at[:, n].set(new_contact_sequence)
+            return (new_t, contact_sequence)#, None
 
-#     return ref
+        
+    init_carry = (t_timer, contact_sequence)
+    _, contact_sequence = jax.lax.fori_loop(0, N, body_fn, init_carry)
+    foot_ref = jnp.tile(foot,(N+1,1))
+
+    return jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref, foot_ref],axis=1), jnp.concatenate([contact_sequence.T,foot_ref.T])
 model_path = './data/aliengo.xml'
 
 joints_name = ['FL_hip_joint', 'FL_thigh_joint', 'FL_calf_joint',
@@ -258,27 +254,6 @@ print(contact_id)
 
 
 
-t = timer_data(duty_factor=0.6,step_freq= 1.35,t=jnp.array([0000.5,0000.0,0000,0000.5]),n_contact=4)
-contact = jnp.zeros(n_contact)
-contact, t = timer_run(t,0.01,contact)
-for i in range(1000):
-    contact, t = timer_run(t,0.01,contact)
-    print(contact)
-np.random.seed(0)
-
-
-# mujoco.mj_step1(model, data)
-# dx = mjx.make_data(model)
-# mjx.forward(mjx_model, mjx_data)
-# point = np.random.randn(3)
-# jacp, jacr = jax.jit(mjx.jac)(mjx_model, dx, point, 4)
-# jacp_expected, jacr_expected = np.zeros((3, model.nv)), np.zeros((3, model.nv))
-# mujoco.mj_jac(model, data, jacp_expected, jacr_expected, point, 4)
-# print(jacp_expected)
-# print(jacp)
-# print(np.testing.assert_almost_equal(jacp, jacp_expected.T, 6))
-# print(np.testing.assert_almost_equal(jacr, jacr_expected.T, 6))
-# Constraint drift terms
 alpha = 10
 beta = 2*np.sqrt(alpha)
 
@@ -461,8 +436,10 @@ def work(reference,parameter,x0,X0,U0,V0):
 # print(f"Compilation time: {end-start}")
 
 env.render()
-t = timer_data(duty_factor=0.6,step_freq= 1.5,delta=[0000.5,0000.0,0000,0000.5])
-t_sim = copy.deepcopy(t)
+# Timer
+timer_t = jnp.array([0000.5,0000.0,0000,0000.5])
+timer_t_sim = timer_t.copy()
+contact, timer_t = timer_run(duty_factor = 0.6, step_freq = 1.35,leg_time=timer_t, dt=dt)
 terrain_height = np.zeros(n_contact)
 
 init = {}
@@ -486,8 +463,8 @@ while True:
     if counter % (sim_frequency / mpc_frequency) == 0 or counter == 0:
 
         foot_op = np.array([env.feet_pos('world').FL, env.feet_pos('world').FR, env.feet_pos('world').RL, env.feet_pos('world').RR],order="F")
-        contact_op = t_sim.run(dt = 1/mpc_frequency)
-        t.set(t_sim.t.copy(),t_sim.init.copy())
+        contact_op , timer_t_sim = timer_run(duty_factor = 0.6, step_freq = 1.35,leg_time=timer_t_sim, dt=dt)
+        timer_t = timer_t_sim.copy()
 
         ref_base_lin_vel, ref_base_ang_vel = env.target_base_vel()
 
@@ -513,10 +490,12 @@ while True:
         input['des_speeds'] = np.array([ref_base_lin_vel[0],ref_base_lin_vel[1],ref_base_lin_vel[2]])
         input['des_height'] = 0.36
 
-        parameter, foot_ref, terrain_height, foot_ref_dot = refGenerator(timer_class = t,initial_state = init,input = input,param=param, terrain_height=terrain_height)
+        # parameter, foot_ref, terrain_height, foot_ref_dot = refGenerator(timer_class = t,initial_state = init,input = input,param=param, terrain_height=terrain_height)
+        input = (ref_base_lin_vel, ref_base_ang_vel, 0.36)
+        reference , parameter = reference_generator(timer_t,jnp.concatenate([qpos,qvel]),foot_op_vec,input,0.6,1.35,0,dt)
 
-        reference = jnp.tile(jnp.concatenate([p_ref, quat_ref,q0, ref_base_lin_vel, ref_base_ang_vel]), (N + 1, 1))
-        reference = jnp.concatenate([reference,foot_ref],axis=1)
+        # reference = jnp.tile(jnp.concatenate([p_ref, quat_ref,q0, ref_base_lin_vel, ref_base_ang_vel]), (N + 1, 1))
+        # reference = jnp.concatenate([reference,foot_ref],axis=1)
         start = timer()
         X,U,V, _,c =  work(reference,parameter,x0,X0,U0,V0)
         X.block_until_ready()
