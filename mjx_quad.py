@@ -85,7 +85,7 @@ def reference_generator(t_timer, x, foot, input, duty_factor, step_freq,step_hei
     # dp = x[7+n_joints:10+n_joints]
     # omega = x[10+n_joints:13+n_joints]
     # dq = x[13+n_joints:13+2*n_joints]
-    ref_lin_vel, ref_base_ang_vel, robot_height = input
+    ref_lin_vel, ref_ang_vel, robot_height = input
     p = jnp.array([p[0], p[1], robot_height])
     p_ref_x = jnp.arange(N+1) * dt * ref_lin_vel[0] + p[0]
     p_ref_y = jnp.arange(N+1) * dt * ref_lin_vel[1] + p[1]
@@ -93,8 +93,8 @@ def reference_generator(t_timer, x, foot, input, duty_factor, step_freq,step_hei
     p_ref = jnp.stack([p_ref_x, p_ref_y, p_ref_z], axis=1)
     quat_ref = jnp.tile(jnp.array([1, 0, 0, 0]), (N+1, 1))
     q_ref = jnp.tile(jnp.array([0, 0.8, -1.8, 0, 0.8, -1.8, 0, 0.8, -1.8, 0, 0.8, -1.8]), (N+1, 1))
-    dp_ref = jnp.tile(ref_base_lin_vel, (N+1, 1))
-    omega_ref = jnp.tile(ref_base_ang_vel, (N+1, 1))
+    dp_ref = jnp.tile(ref_lin_vel, (N+1, 1))
+    omega_ref = jnp.tile(ref_ang_vel, (N+1, 1))
     contact_sequence = jnp.zeros(((N+1), n_contact))
     foot_ref = jnp.tile(foot-jnp.tile(p,(1,n_contact)), (N+1, 1))
     def foot_fn(t,carry):
@@ -313,9 +313,9 @@ Qdq = jnp.diag(jnp.ones(n_joints)) * 1e-1
 Rgrf = jnp.diag(jnp.ones(3 * n_contact)) * 1e-3
 Qrot = jnp.diag(jnp.array([500,500,0]))
 Qtau = jnp.diag(jnp.ones(n_joints)) * 1e-1
-Qleg = jnp.diag(jnp.tile(jnp.array([1e3,1e3,1e3]),n_contact))
+Qleg = jnp.diag(jnp.tile(jnp.array([1e4,1e4,1e5]),n_contact))
 Qpenalty = jnp.diag(jnp.ones(5*n_contact))
-QpenaltyZ = jnp.diag(jnp.ones(3*n_contact))*20
+QpenaltyZ = jnp.diag(jnp.ones(3*n_contact))*10
 # Define the cost function
 @jax.jit
 def cost(x, u, t, reference):
@@ -363,7 +363,7 @@ def cost(x, u, t, reference):
     #use ln(1+exp(x)) as a smooth approximation of max(0,x)
     friction_cone = 1/alpha*(jnp.log1p(jnp.exp(-alpha*friction_cone)))
     delta = 0.0001
-    alpha_swing = 0.2
+    alpha_swing = 0.1
     swing_z_plus = p_leg-p_leg_ref #+ jnp.ones(3*n_contact)*delta
     swing_z_plus = 1/alpha_swing*(jnp.log1p(jnp.exp(-alpha_swing*swing_z_plus)))
     swing_z_minus = p_leg-p_leg_ref #- jnp.ones(3*n_contact)*delta
@@ -371,10 +371,10 @@ def cost(x, u, t, reference):
 
     stage_cost = (p - p_ref).T @ Qp @ (p - p_ref) +  (q - q_ref).T @ Qq @ (q - q_ref) + math.quat_sub(quat,quat_ref).T@Qrot@math.quat_sub(quat,quat_ref) +\
                  (dp - dp_ref).T @ Qdp @ (dp - dp_ref) + (omega - omega_ref).T @ Qomega @ (omega - omega_ref) + dq.T @ Qdq @ dq +\
-                 tau.T @ Qtau @ tau+\
-                 friction_cone.T @ Qpenalty @ friction_cone+\
-                (p_leg - p_leg_ref).T @ Qleg @ (p_leg - p_leg_ref)+\
-                swing_z_plus.T @ QpenaltyZ @ swing_z_plus + swing_z_minus.T @ QpenaltyZ @ swing_z_minus
+                 tau.T @ Qtau @ tau +\
+                 (p_leg - p_leg_ref).T @ Qleg @ (p_leg - p_leg_ref) +\
+                 friction_cone.T @ Qpenalty @ friction_cone
+                # swing_z_plus.T @ QpenaltyZ @ swing_z_plus + swing_z_minus.T @ QpenaltyZ @ swing_z_minus
     term_cost = (p - p_ref).T @ Qp @ (p - p_ref) + (dp-dp_ref).T @ Qdp @ (dp-dp_ref) + (omega-omega_ref).T @ Qomega @ (omega-omega_ref)
 
 
@@ -430,6 +430,7 @@ for i in range(N*4):
               diameter = 0.01,
               color=[1,0,0,1]))
 ref = []
+ref_history = []
 actual = []
 while env.viewer.is_running():
 
@@ -508,7 +509,6 @@ while env.viewer.is_running():
 # plt.show()
 ref = np.array(ref)
 actual = np.array(actual)
-
 for i, leg in enumerate(['FL', 'FR', 'RL', 'RR']):
     ax = axs[i // 2, i % 2]
     ax.plot(ref[:, 2 + 3 * i], label=f'{leg} reference z')
