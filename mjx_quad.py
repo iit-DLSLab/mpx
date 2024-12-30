@@ -188,23 +188,8 @@ N = 50  # Number of stages
 n =  13 + 2*n_joints + 3*n_contact # Number of states (theta1, theta1_dot, theta2, theta2_dot)
 m = n_joints  # Number of controls (F)
 dt = 0.01  # Time step
-param = {}
-
-param["N"] = N
-param["n"] = n
-param["m"] = m
-param["dt"] = dt
-param["n_contact"] = 4
-
-mass = 24
-print('mass:\n',mass)
-inertia = jnp.array([[ 2.5719824e-01,  1.3145953e-03, -1.6161108e-02],[ 1.3145991e-03,  1.0406910e+00,  1.1957530e-04],[-1.6161105e-02,  1.1957530e-04,  1.0870107e+00]])
-print('inertia',inertia)
-
-inertia_inv = jnp.linalg.inv(inertia)
 p_legs0 = jnp.array([ 0.2717287,   0.13780001,  0.02074774,  0.2717287,  -0.13780001,  0.02074774, -0.20967132,  0.13780001,  0.02074774, -0.20967132, -0.13780001,  0.02074774])
 print('leg:\n',p_legs0)
-param['foot_0'] = p_legs0
 
 model = env.mjModel
 data = env.mjData
@@ -216,7 +201,6 @@ for name in contact_frame:
 body_id = []
 for name in body_name:
     body_id.append(mjx.name2id(mjx_model,mujoco.mjtObj.mjOBJ_BODY,name))
-print(contact_id)
 
 
 
