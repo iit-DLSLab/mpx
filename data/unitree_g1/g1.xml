@@ -219,10 +219,10 @@
                   <inertial pos="0.133814 0.00147121 0.000265832" quat="0.496781 0.497877 0.498782 0.506502"
                     mass="0.50826" diaginertia="0.00239763 0.00226639 0.000285577"/>
                   <joint name="left_elbow_roll_joint" axis="1 0 0" range="-2.0943 2.0943"/>
-                  <!-- <geom type="mesh" class="visual" mesh="left_elbow_roll_link"/>
-                  <geom type="mesh" mesh="left_elbow_roll_link" class="collision"/>
+                  <geom type="mesh" class="visual" mesh="left_elbow_roll_link"/>
+                  <!-- <geom type="mesh" mesh="left_elbow_roll_link" class="collision"/> -->
                   <geom pos="0.12 0 0" type="mesh" class="visual" mesh="left_palm_link"/>
-                  <geom pos="0.12 0 0" type="mesh" mesh="left_palm_link" class="collision"/> -->
+                  <!-- <geom pos="0.12 0 0" type="mesh" mesh="left_palm_link" class="collision"/> -->
                 </body>
               </body>
             </body>

@@ -189,7 +189,6 @@ n =  13 + 2*n_joints + 3*n_contact # Number of states (theta1, theta1_dot, theta
 m = n_joints  # Number of controls (F)
 dt = 0.01  # Time step
 p_legs0 = jnp.array([ 0.2717287,   0.13780001,  0.02074774,  0.2717287,  -0.13780001,  0.02074774, -0.20967132,  0.13780001,  0.02074774, -0.20967132, -0.13780001,  0.02074774])
-print('leg:\n',p_legs0)
 
 model = env.mjModel
 data = env.mjData
@@ -400,8 +399,6 @@ timer_t_sim = timer_t.copy()
 contact, timer_t = mpc_utils.timer_run(duty_factor = 0.6, step_freq = 1.35,leg_time=timer_t, dt=dt)
 liftoff = p_legs0.copy()
 terrain_height = np.zeros(n_contact)
-init = {}
-input = {}
 
 Kp = 10
 Kd = 2
@@ -435,7 +432,6 @@ while env.viewer.is_running():
         omega = qvel[3:6]
         dq = qvel[6:].copy()
 
-        rpy = env.base_ori_euler_xyz.copy()
         foot_op_vec = foot_op.flatten()
         x0 = jnp.concatenate([qpos, qvel,np.zeros(3*n_contact)])
         input = (ref_base_lin_vel, ref_base_ang_vel, 0.36)
@@ -445,7 +441,6 @@ while env.viewer.is_running():
         X.block_until_ready()
         stop = timer()
         print(f"Time elapsed: {stop-start}")
-        print("mu:",mu)
         # move the prediction one step forward
         U0 = jnp.concatenate([U[1:],U[-1:]])
         X0 = jnp.concatenate([X[1:],X[-1:]])
