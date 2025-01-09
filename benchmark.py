@@ -189,8 +189,8 @@ def work(reference,parameter,x0,X0,U0,V0,mu):
 #         X,U,V, _,_,_ = work(reference,parameter,x0,X0,U0,V0,mu)
 #     end = timer()
 #     print(f"Time for N = {N} is {(end-start)/100}")
-Ns = [500,1000,2000,3000,4000,5000,10000]
-N = 50
+Ns = [1,2,4,8,16,32,64,128,256,512,1024,2048]
+N = 20
 times = []
 for val in Ns:
     U0 = jnp.tile(grf_ref, (N, 1))
@@ -223,11 +223,13 @@ for val in Ns:
     end = timer()
     print(f"Time for n = {val} is {(end-start)/10}")
     times.append((end-start)/10)
+
 import matplotlib.pyplot as plt
 plt.plot(Ns, times, marker='o')
 plt.xlabel('Batch Size (n)')
 plt.ylabel('Average Time (s)')
 plt.title('Average Time vs Batch Size')
+plt.xscale('log')
 plt.grid(True)
 plt.show()
     

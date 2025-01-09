@@ -159,7 +159,7 @@ n_contact = len(contact_frame)
 N = 50  # Number of stages
 n =  13 + 2*n_joints + 6*n_contact # Number of states (theta1, theta1_dot, theta2, theta2_dot)
 m = n_joints  # Number of controls (F)
-dt = 0.01  # Time step
+dt = 0.01 # Time step
 # p_legs0 = jnp.array([ 0.2717287,   0.13780001,  0.02074774,  0.2717287,  -0.13780001,  0.02074774])
 mjx_model = mjx.put_model(model)
 
@@ -264,17 +264,17 @@ pos0 = jnp.array([0, 0, 0.75,
 vel0 = jnp.zeros(6 + n_joints)  
 x0 = jnp.concatenate([pos0, vel0])
 u0 = jnp.zeros(m)
-Qp = jnp.diag(jnp.array([10, 10, 1e4]))
+Qp = jnp.diag(jnp.array([0, 0, 1e4]))
 Qq = jnp.diag(jnp.ones(n_joints)) * 1e2
-Qdp = jnp.diag(jnp.array([1, 1, 1]))*1e4
+Qdp = jnp.diag(jnp.array([1, 1, 1]))*1e3
 Qomega = jnp.diag(jnp.array([1, 1, 1]))*1e2
 Qdq = jnp.diag(jnp.ones(n_joints)) * 1e-1
-Rgrf = jnp.diag(jnp.ones(6 * n_contact)) * 1e-3
 Qrot = jnp.diag(jnp.array([500,500,0]))
 Qtau = jnp.diag(jnp.ones(n_joints)) * 1e-1
 Qleg = jnp.diag(jnp.tile(jnp.array([1e4,1e4,1e5]),n_contact))
 Qpenalty = jnp.diag(jnp.ones(5*n_contact))
 QpenaltyZ = jnp.diag(jnp.ones(3*n_contact))*10
+Rreg = jnp.diag(jnp.ones(6 + n_joints)) * 1
 # Define the cost function
 @jax.jit
 def cost(x, u, t, reference):
@@ -293,15 +293,26 @@ def cost(x, u, t, reference):
     q_ref = reference[t,7:7+n_joints]
     dp_ref = reference[t,7+n_joints:10+n_joints]
     omega_ref = reference[t,10+n_joints:13+n_joints]
-    p_leg_ref = reference[t,13+n_joints:]
+    p_leg_ref = reference[t,13+n_joints:13+n_joints+3*n_contact]
+    grf_ref = jnp.array([0,0,343.35/2,0,0,0,0,0,343.35/2,0,0,0])
     mjx_data = mjx.make_data(model)
-    mjx_data = mjx_data.replace(qpos = x[:n_joints+7], qvel = x[n_joints+7:13+2*n_joints])
+    mjx_data = mjx_data.replace(qpos = x[:n_joints+7], qvel = jnp.zeros(6+n_joints))
 
     mjx_data = mjx.fwd_position(mjx_model, mjx_data)
+    mjx_data = mjx.fwd_velocity(mjx_model, mjx_data)
+
+    D = mjx_data.qfrc_bias
 
     left_foot = mjx_data.geom_xpos[contact_id[0]]
     right_foot = mjx_data.geom_xpos[contact_id[1]]
 
+    J_left_l,J_left_a = mjx.jac(mjx_model, mjx_data, left_foot, body_id[4])
+    J_right_l,J_right_a = mjx.jac(mjx_model, mjx_data, right_foot, body_id[8])
+
+    J = jnp.concatenate([J_left_l,J_left_a,J_right_l,J_right_a],axis=1)
+
+    torque_reg = jnp.concatenate([jnp.zeros(6),tau])-D+J@grf
+    
     p_leg = jnp.concatenate([left_foot,right_foot],axis=0)
 
 
@@ -319,10 +330,10 @@ def cost(x, u, t, reference):
     # swing_z_minus = p_leg-p_leg_ref #- jnp.ones(3*n_contact)*delta
     # swing_z_minus = 1/alpha_swing*(jnp.log1p(jnp.exp(-alpha_swing*swing_z_minus)))
 
-    stage_cost = (p - p_ref).T @ Qp @ (p - p_ref) +  (q - q_ref).T @ Qq @ (q - q_ref) + math.quat_sub(quat,quat_ref).T@Qrot@math.quat_sub(quat,quat_ref) +\
+    stage_cost = (p - p_ref).T @ Qp @ (p - p_ref) +  (q - q_ref).T @ Qq @ (q - q_ref) +\
                  (dp - dp_ref).T @ Qdp @ (dp - dp_ref) + (omega - omega_ref).T @ Qomega @ (omega - omega_ref) + dq.T @ Qdq @ dq +\
-                 tau.T @ Qtau @ tau +\
-                 (p_leg - p_leg_ref).T @ Qleg @ (p_leg - p_leg_ref)#
+                 + tau.T@Qtau@tau + torque_reg.T @ Rreg @ torque_reg
+                #  (p_leg - p_leg_ref).T @ Qleg @ (p_leg - p_leg_ref)#
                  #+friction_cone.T @ Qpenalty @ friction_cone
                 # swing_z_plus.T @ QpenaltyZ @ swing_z_plus + swing_z_minus.T @ QpenaltyZ @ swing_z_minus
     term_cost = (p - p_ref).T @ Qp @ (p - p_ref) + (dp-dp_ref).T @ Qdp @ (dp-dp_ref) + (omega-omega_ref).T @ Qomega @ (omega-omega_ref)
@@ -356,7 +367,7 @@ parameter = jnp.tile(jnp.concatenate([jnp.ones(4),p_legs0]),(N+1,1))
 from timeit import default_timer as timer
 mu = 1e-3
 @jax.jit
-def work(reference,parameter,x0,X0,U0,V0,mu):
+def work(reference,parameter,x0,X0,U0,V0):
     return optimizers.mpc(
         cost,
         dynamics,
@@ -366,10 +377,9 @@ def work(reference,parameter,x0,X0,U0,V0,mu):
         X0,
         U0,
         V0,
-        mu,
     )
 # Timer
-duty_factor = 0.8
+duty_factor = 2
 step_freq = 0.7
 timer_t = jnp.array([0000.5,0000.0])
 timer_t_sim = timer_t.copy()
@@ -377,6 +387,7 @@ contact, timer_t = mpc_utils.timer_run(duty_factor = duty_factor, step_freq = st
 liftoff = p_legs0.copy()
 terrain_height = np.zeros(n_contact)
 counter = 0
+jitdyn = jax.jit(dynamics)
 with mujoco.viewer.launch_passive(model, d) as viewer:
     while viewer.is_running():
         qpos = d.qpos.copy()
@@ -402,8 +413,8 @@ with mujoco.viewer.launch_passive(model, d) as viewer:
             x0 = jnp.concatenate([qpos, qvel,np.zeros(6*n_contact)])
             input = (ref_base_lin_vel, ref_base_ang_vel, 0.36)
             start = timer()
-            reference , parameter , liftoff = reference_generator(timer_t, jnp.concatenate([qpos,qvel]), foot_op_vec, input, duty_factor = duty_factor,  step_freq= step_freq ,step_height=0.08,liftoff=liftoff)
-            X,U,V, _,c,mu =  work(reference,parameter,x0,X0,U0,V0,mu)
+            _ , parameter , liftoff = reference_generator(timer_t, jnp.concatenate([qpos,qvel]), foot_op_vec, input, duty_factor = duty_factor,  step_freq= step_freq ,step_height=0.08,liftoff=liftoff)
+            X,U,V, _,_ =  work(reference,parameter,x0,X0,U0,V0)
             X.block_until_ready()
             stop = timer()
             print(f"Time elapsed: {stop-start}")
@@ -412,6 +423,12 @@ with mujoco.viewer.launch_passive(model, d) as viewer:
             X0 = jnp.concatenate([X[1:],X[-1:]])
             V0 = jnp.concatenate([V[1:],V[-1:]])
             tau = U[0,:n_joints]
+            # tau = 60*(np.zeros(n_joints)-qpos[7:7+n_joints]) + 4*(np.zeros(n_joints)-qvel[6:6+n_joints])
+            # time.sleep(0.1)
+            # xnew = jitdyn(x0,tau,0,parameter)
+            # d.qpos = xnew[:n_joints+7] 
+            # d.qvel = xnew[n_joints+7:13+2*n_joints] 
+
         d.ctrl = tau
         mujoco.mj_step(model, d)
         
