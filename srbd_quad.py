@@ -143,10 +143,6 @@ def reference_generator(t_timer, x,rpy, foot, input, duty_factor, step_freq,step
             return 2*a2*val + 3*a3*val**2
         
         def cubic_splineZ_dot(current_foot, foothold, step_height,val):
-            # a0 = current_foot
-            # a1 = 0
-            # a2 = 8*(step_height) - foothold + current_foot
-            # a3 = 8*(step_height) - 2*a2
             a0 = current_foot
             a3 = 8*step_height - 6*foothold -2*a0
             a2 = -foothold +a0 -2*a3
@@ -243,14 +239,11 @@ grf_ref = jnp.zeros(3 * n_contact)
 
 u_ref = grf_ref
 
-Qp = jnp.diag(jnp.array([0, 0, 1000]))
-Qq = jnp.diag(jnp.ones(n_joints)) * 1e2
-Qdp = jnp.diag(jnp.array([100, 100, 100]))
+Qp = jnp.diag(jnp.array([0, 0, 10000]))
+Qdp = jnp.diag(jnp.array([1000, 1000, 1000]))
 Qomega = jnp.diag(jnp.array([10, 10, 10]))
-Qdq = jnp.diag(jnp.ones(n_joints)) * 1e-2
 Rgrf = jnp.diag(jnp.ones(3 * n_contact)) * 1e-3
-Qquat = jnp.diag(jnp.ones(4)) * 1e-1
-Qrpy = jnp.diag(jnp.array([100,100,0]))
+Qrpy = jnp.diag(jnp.array([500,500,0]))
 
 # Define the cost function
 @jax.jit
@@ -345,10 +338,9 @@ input = {}
 Kp = 10
 Kd = 2
 
-Kp_c = 400
-Kd_c = 10
+Kp_c = 300
+Kd_c = 5
 counter = 0
-
 
 
 while True:
@@ -381,9 +373,9 @@ while True:
         X,U,V, _,_,_ =  work(reference,parameter,x0,X0,U0,V0,mu)
         stop = timer()
         print(f"Execution time: {stop-start}")
-        U0 = U
-        X0 = X
-        V0 = V
+        U0 = jnp.concatenate([U[1:],U[-1:]])
+        X0 = jnp.concatenate([X[1:],X[-1:]])
+        V0 = jnp.concatenate([V[1:],V[-1:]])
         grf_ = U[0,:]
 
     feet_jac = env.feet_jacobians(frame='world', return_rot_jac=False)
@@ -404,7 +396,7 @@ while True:
     action[env.legs_tau_idx.RR] = (feet_jac['RR'].T @ ((1-contact_op[3])*catisian_space_action[9:]-grf_[9:] ))[15:18]
     mass_matrix = np.zeros((env.mjModel.nv, env.mjModel.nv))
     mujoco.mj_fullM(env.mjModel, mass_matrix, env.mjData.qM)
-    tau_gravity = env.mjData.qfrc_bias[6:] + (mass_matrix @ env.mjData.qacc)[6:]
+    tau_gravity = env.mjData.qfrc_bias[6:] #+ (mass_matrix @ env.mjData.qacc)[6:]
     state, reward, is_terminated, is_truncated, info = env.step(action=action+tau_gravity)
     counter += 1
     if is_terminated:
