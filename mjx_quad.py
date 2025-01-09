@@ -1,16 +1,14 @@
 import os
-# os.environ['XLA_FLAGS'] = (
-    # '--xla_gpu_enable_triton_softmax_fusion=true '
-    # '--xla_gpu_triton_gemm_any=True '
-    # '--xla_gpu_enable_async_collectives=true '
-    # '--xla_gpu_enable_latency_hiding_scheduler=true '
-    # '--xla_gpu_enable_highest_priority_async_stream=true '
-# )
-os.environ.update({
-  "NCCL_LL128_BUFFSIZE": "-2",
-  "NCCL_LL_BUFFSIZE": "-2",
-   "NCCL_PROTO": "SIMPLE,LL,LL128",
- })
+os.environ['XLA_FLAGS'] = (
+    '--xla_gpu_enable_triton_softmax_fusion=true '
+    '--xla_gpu_triton_gemm_any=true '
+    # '--xla_gpu_deterministic_ops=true'
+)
+# os.environ.update({
+#   "NCCL_LL128_BUFFSIZE": "-2",
+#   "NCCL_LL_BUFFSIZE": "-2",
+#    "NCCL_PROTO": "SIMPLE,LL,LL128",
+#  })
 import jax.numpy as jnp
 import jax
 jax.config.update("jax_compilation_cache_dir", "./jax_cache")
@@ -184,8 +182,8 @@ n_joints = len(joints_name)
 n_contact = len(contact_frame)
 
 # Problem dimensions
-N = 50  # Number of stages
-n =  13 + 2*n_joints + 3*n_contact # Number of states (theta1, theta1_dot, theta2, theta2_dot)
+N = 100  # Number of stages
+n =  13 + 2*n_joints + 6*n_contact  # Number of states (theta1, theta1_dot, theta2, theta2_dot)
 m = n_joints  # Number of controls (F)
 dt = 0.01  # Time step
 p_legs0 = jnp.array([ 0.2717287,   0.13780001,  0.02074774,  0.2717287,  -0.13780001,  0.02074774, -0.20967132,  0.13780001,  0.02074774, -0.20967132, -0.13780001,  0.02074774])
@@ -234,7 +232,7 @@ def dynamics(x, u, t, parameter):
     J_RR, _ = mjx.jac(mjx_model, mjx_data, RR_leg, body_id[11])
 
     J = jnp.concatenate([J_FL,J_FR,J_RL,J_RR],axis=1)
-
+    current_leg = jnp.concatenate([FL_leg, FR_leg, RL_leg, RR_leg],axis = 0)
     g = jnp.concatenate([FL_leg, FR_leg, RL_leg, RR_leg],axis = 0) - p_legs # position-level constraint violation
     g_dot = J.T @ x[n_joints+7:13+2*n_joints]  # Velocity-level constraint violation
 
@@ -265,14 +263,14 @@ def dynamics(x, u, t, parameter):
     p = x[:3] + v[:3] * dt
     quat = math.quat_integrate(x[3:7], v[3:6], dt)
     q = x[7:7+n_joints] + v[6:6+n_joints] * dt
-    x_next = jnp.concatenate([p, quat, q, v, grf])
+    x_next = jnp.concatenate([p, quat, q, v, current_leg,grf])
 
     return x_next
 
 p0 = jnp.array([0, 0, 0.33])
 quat0 = jnp.array([1, 0, 0, 0])
 q0 = jnp.array([0,0.8,-1.8,0,0.8,-1.8,0,0.8,-1.8,0,0.8,-1.8])
-x0 = jnp.concatenate([p0, quat0,q0, jnp.zeros(6+n_joints),jnp.zeros(3*n_contact)])
+x0 = jnp.concatenate([p0, quat0,q0, jnp.zeros(6+n_joints),p_legs0,jnp.zeros(3*n_contact)])
 grf0 = jnp.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 
 p_ref = jnp.array([0, 0, 0.36])
@@ -288,9 +286,9 @@ tau_ref = jnp.zeros(n_joints)
 
 u_ref = jnp.concatenate([tau_ref])
 
-Qp = jnp.diag(jnp.array([10, 10, 1e4]))
+Qp = jnp.diag(jnp.array([0, 0, 1e4]))
 Qq = jnp.diag(jnp.ones(n_joints)) * 1e-1
-Qdp = jnp.diag(jnp.array([1, 1, 1]))*1e4
+Qdp = jnp.diag(jnp.array([1, 1, 1]))*1e3
 Qomega = jnp.diag(jnp.array([1, 1, 1]))*1e2
 Qdq = jnp.diag(jnp.ones(n_joints)) * 1e-1
 Rgrf = jnp.diag(jnp.ones(3 * n_contact)) * 1e-3
@@ -309,7 +307,8 @@ def cost(x, u, t, reference):
     dp = x[7+n_joints:10+n_joints]
     omega = x[10+n_joints:13+n_joints]
     dq = x[13+n_joints:13+2*n_joints]
-    grf = x[13+2*n_joints:]
+    p_leg = x[13+2*n_joints:13+2*n_joints+3*n_contact]
+    grf = x[13+2*n_joints+3*n_contact:]
     tau = u[:n_joints]
 
     p_ref = reference[t,:3]
@@ -323,12 +322,12 @@ def cost(x, u, t, reference):
 
     mjx_data = mjx.fwd_position(mjx_model, mjx_data)
 
-    FL_leg = mjx_data.geom_xpos[contact_id[0]]
-    FR_leg = mjx_data.geom_xpos[contact_id[1]]
-    RL_leg = mjx_data.geom_xpos[contact_id[2]]
-    RR_leg = mjx_data.geom_xpos[contact_id[3]]
+    # FL_leg = mjx_data.geom_xpos[contact_id[0]]
+    # FR_leg = mjx_data.geom_xpos[contact_id[1]]
+    # RL_leg = mjx_data.geom_xpos[contact_id[2]]
+    # RR_leg = mjx_data.geom_xpos[contact_id[3]]
 
-    p_leg = jnp.concatenate([FL_leg,FR_leg,RL_leg,RR_leg],axis=0)
+    # p_leg = jnp.concatenate([FL_leg,FR_leg,RL_leg,RR_leg],axis=0)
 
     # J_FL, _ = mjx.jac(mjx_model, mjx_data, FL_leg, body_id[2])
     # J_FR, _ = mjx.jac(mjx_model, mjx_data, FR_leg, body_id[5])
@@ -345,19 +344,18 @@ def cost(x, u, t, reference):
     alpha = 0.1
     #use ln(1+exp(x)) as a smooth approximation of max(0,x)
     friction_cone = 1/alpha*(jnp.log1p(jnp.exp(-alpha*friction_cone)))
-    delta = 0.0001
-    alpha_swing = 0.1
-    swing_z_plus = p_leg-p_leg_ref #+ jnp.ones(3*n_contact)*delta
-    swing_z_plus = 1/alpha_swing*(jnp.log1p(jnp.exp(-alpha_swing*swing_z_plus)))
-    swing_z_minus = p_leg-p_leg_ref #- jnp.ones(3*n_contact)*delta
-    swing_z_minus = 1/alpha_swing*(jnp.log1p(jnp.exp(-alpha_swing*swing_z_minus)))
+    # delta = 0.0001
+    # alpha_swing = 0.1
+    # swing_z_plus = p_leg-p_leg_ref #+ jnp.ones(3*n_contact)*delta
+    # swing_z_plus = 1/alpha_swing*(jnp.log1p(jnp.exp(-alpha_swing*swing_z_plus)))
+    # swing_z_minus = p_leg-p_leg_ref #- jnp.ones(3*n_contact)*delta
+    # swing_z_minus = 1/alpha_swing*(jnp.log1p(jnp.exp(-alpha_swing*swing_z_minus)))
 
     stage_cost = (p - p_ref).T @ Qp @ (p - p_ref) +  (q - q_ref).T @ Qq @ (q - q_ref) + math.quat_sub(quat,quat_ref).T@Qrot@math.quat_sub(quat,quat_ref) +\
                  (dp - dp_ref).T @ Qdp @ (dp - dp_ref) + (omega - omega_ref).T @ Qomega @ (omega - omega_ref) + dq.T @ Qdq @ dq +\
                  tau.T @ Qtau @ tau +\
-                 (p_leg - p_leg_ref).T @ Qleg @ (p_leg - p_leg_ref) +\
-                 friction_cone.T @ Qpenalty @ friction_cone
-                # swing_z_plus.T @ QpenaltyZ @ swing_z_plus + swing_z_minus.T @ QpenaltyZ @ swing_z_minus
+                 (p_leg - p_leg_ref).T @ Qleg @ (p_leg - p_leg_ref) #+\
+                #  friction_cone.T @ Qpenalty @ friction_cone
     term_cost = (p - p_ref).T @ Qp @ (p - p_ref) + (dp-dp_ref).T @ Qdp @ (dp-dp_ref) + (omega-omega_ref).T @ Qomega @ (omega-omega_ref)
 
 
@@ -373,7 +371,7 @@ p_legs0 = p_legs0.at[2::3].set(jnp.array([-0.33,-0.33,-0.33,-0.33]))
 from timeit import default_timer as timer
 mu = 1e-3
 @jax.jit
-def work(reference,parameter,x0,X0,U0,V0,mu):
+def work(reference,parameter,x0,X0,U0,V0):
     return optimizers.mpc(
         cost,
         dynamics,
@@ -383,7 +381,6 @@ def work(reference,parameter,x0,X0,U0,V0,mu):
         X0,
         U0,
         V0,
-        mu,
     )
 
 # Vectorize the work function to solve multiple instances in parallel
@@ -433,11 +430,11 @@ while env.viewer.is_running():
         dq = qvel[6:].copy()
 
         foot_op_vec = foot_op.flatten()
-        x0 = jnp.concatenate([qpos, qvel,np.zeros(3*n_contact)])
+        x0 = jnp.concatenate([qpos, qvel,foot_op_vec,jnp.zeros(3*n_contact)])
         input = (ref_base_lin_vel, ref_base_ang_vel, 0.36)
         start = timer()
         reference , parameter , liftoff = reference_generator(timer_t, jnp.concatenate([qpos,qvel]), foot_op_vec, input, duty_factor = 0.6,  step_freq= 1.35 ,step_height=0.08,liftoff=liftoff)
-        X,U,V, _,c,mu =  work(reference,parameter,x0,X0,U0,V0,mu)
+        X,U,V, _,_, =  work(reference,parameter,x0,X0,U0,V0)
         X.block_until_ready()
         stop = timer()
         print(f"Time elapsed: {stop-start}")
