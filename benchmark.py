@@ -205,13 +205,6 @@ for val in Ns:
     mu_batch = jnp.tile(mu,val)
     batch_reference = jnp.tile(reference,(val,1,1))
     batch_parameter = jnp.tile(parameter,(val,1,1))
-    # print(batch_U0.shape)
-    # print(batch_X0.shape)
-    # print(batch_V0.shape)
-    # print(batch_x0.shape)
-    # print(batch_reference.shape)
-    # print(batch_parameter.shape)
-    # print(mu_batch.shape)
     
     
     vmap_work = jax.vmap(work)
