@@ -213,8 +213,8 @@
                 <inertial pos="0.064497 0.002873 0" quat="0.582347 0.582495 0.400893 0.401069" mass="0.601"
                   diaginertia="0.00049549 0.0004712 0.00025371"/>
                 <joint name="left_elbow_pitch_joint" axis="0 1 0" range="-0.2268 3.4208"/>
-                <!-- <geom type="mesh" class="visual" mesh="left_elbow_pitch_link"/>
-                <geom type="mesh" mesh="left_elbow_pitch_link" class="collision"/> -->
+                <geom type="mesh" class="visual" mesh="left_elbow_pitch_link"/>
+                <!-- <geom type="mesh" mesh="left_elbow_pitch_link" class="collision"/> -->
                 <body name="left_elbow_roll_link" pos="0.1 0 0">
                   <inertial pos="0.133814 0.00147121 0.000265832" quat="0.496781 0.497877 0.498782 0.506502"
                     mass="0.50826" diaginertia="0.00239763 0.00226639 0.000285577"/>
