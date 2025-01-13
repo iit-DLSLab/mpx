@@ -30,6 +30,7 @@ from jax.scipy.spatial.transform import Rotation
 
 from primal_dual_ilqr.utils.rotation import quaternion_integration,rpy_intgegration
 import primal_dual_ilqr.utils.mpc_utils as mpc_utils
+import benchmark.multirobotAcados as acd
 gpu_device = jax.devices('gpu')[0]
 jax.default_device(gpu_device)
 
@@ -210,7 +211,8 @@ def reference_generator(t_timer, x,rpy, foot, input, duty_factor, step_freq,step
     # foot to world frame
     
     foot_ref = foot_ref@jax.scipy.linalg.block_diag(Rz,Rz,Rz,Rz).T + jnp.tile(p,(N+1,n_contact))
-    return jnp.concatenate([p_ref, rpy_ref, dp_ref, omega_ref], axis=1), jnp.concatenate([contact_sequence, foot_ref], axis=1), liftoff,foot_ref_dot,foot_ref_ddot
+    grf_ref = jnp.zeros((N+1,3*n_contact))
+    return jnp.concatenate([p_ref, rpy_ref, dp_ref, omega_ref,grf_ref], axis=1), jnp.concatenate([contact_sequence, foot_ref], axis=1), liftoff,foot_ref_dot,foot_ref_ddot
 
 
 
@@ -293,13 +295,21 @@ def cost(x, u, t, reference):
     dp_ref = reference[t,6:9]
     omega_ref = reference[t,9:12]
 
-    stage_cost = (p - p_ref).T @ Qp @ (p - p_ref) + (rpy-rpy_ref).T@Qrpy@(rpy-rpy_ref) + (dp-dp_ref).T @ Qdp @ (dp-dp_ref) + (omega-omega_ref).T @ Qomega @ (omega-omega_ref) + grf.T @ Rgrf @ grf 
+    mu = 0.7
+    friction_cone = jnp.array([[0,0,1],[-1,0,mu],[1,0,mu],[0,-1,mu],[0,1,mu]])
+    friction_cone = jnp.kron(jnp.eye(n_contact), friction_cone)
+    friction_cone = friction_cone @ grf
+    alpha = 0.1
+    #use ln(1+exp(x)) as a smooth approximation of max(0,x)
+    friction_cone = 1/alpha*(jnp.log1p(jnp.exp(-alpha*friction_cone)))
+    stage_cost = (p - p_ref).T @ Qp @ (p - p_ref) + (rpy-rpy_ref).T@Qrpy@(rpy-rpy_ref) + (dp-dp_ref).T @ Qdp @ (dp-dp_ref) + (omega-omega_ref).T @ Qomega @ (omega-omega_ref) + grf.T @ Rgrf @ grf +\
+                friction_cone.T @ friction_cone
     term_cost = (p - p_ref).T @ Qp @ (p - p_ref) + (rpy-rpy_ref).T@Qrpy@(rpy-rpy_ref) + (dp-dp_ref).T @ Qdp @ (dp-dp_ref) + (omega-omega_ref).T @ Qomega @ (omega-omega_ref)
     return jnp.where(t == N, 0.5 * term_cost, 0.5 * stage_cost)
 param_size = 4*n_contact
 from timeit import default_timer as timer
 
-for n_robot in [2,4,8,16,32,64]:
+for n_robot in [1,2,4,8,16]:
     @jax.jit
     def multi_robot_dynamics(x, u, t,parameter):
         return jnp.concatenate([dynamics(x[n*i:n*i+n], u[m*i:m+m*i], t,parameter[:,i*param_size:param_size+i*param_size]) for i in range(n_robot)], axis=0)
@@ -311,8 +321,15 @@ for n_robot in [2,4,8,16,32,64]:
     U0 = jnp.tile(jnp.tile(u_ref,(1,n_robot)), (N, 1))
     X0 = jnp.tile(jnp.tile(x0,(1,n_robot)), (N + 1, 1))
     V0 = jnp.zeros((N + 1, n*n_robot ))
-    reference = jnp.tile(jnp.tile(jnp.concatenate([p_ref, rpy_ref, dp_ref, omega_ref]),(1,n_robot)), (N + 1, 1))
-    parameter = jnp.tile(jnp.tile(jnp.concatenate([jnp.ones(4),p_legs0]),(1,n_robot)),(N+1,1))
+    x0_ = jnp.tile(x0,(n_robot))
+    reference = jnp.tile(jnp.tile(jnp.concatenate([p_ref, rpy_ref, dp_ref, omega_ref, grf_ref]), (1, n_robot)), (N + 1, 1))
+    noise_dp_ref = jax.random.normal(jax.random.PRNGKey(0), (N + 1, 3 * n_robot)) * 0.1
+    dp_ref_with_noise = noise_dp_ref
+    noise_x0 = jax.random.normal(jax.random.PRNGKey(0),n* n_robot) * 0.01
+    for robot in range(n_robot):
+        reference = reference.at[:, 6+12*robot:9+12*robot].set(dp_ref_with_noise[:,3*robot:3+3*robot])
+        x0_ = x0_.at[12*robot:12+12*robot].set(x0_[12*robot:12+12*robot] + noise_x0[n*robot:n+n*robot])
+    parameter = jnp.tile(jnp.tile(jnp.concatenate([jnp.ones(4), p_legs0]), (1, n_robot)), (N + 1, 1))
     mu = 1e-3
     @jax.jit
     def work(reference,parameter,x0,X0,U0,V0):
@@ -326,12 +343,46 @@ for n_robot in [2,4,8,16,32,64]:
             U0,
             V0,
         )
-    print("Simulation started")
+    X,U,V, _,_ = work(reference,parameter,x0_,X0,U0,V0)
+    args = {}
+    make_model = True
+
+    args['N'] = N # Horizon lenght
+    args['dt'] = dt # delta time between the integration node
+    
+    srbd_acados = acd.ocp_formulation(args)
+    srbd_acados_solver = srbd_acados.getOptimalProblem(model_name = "srbd_" + str(n_robot), n_robot=n_robot)
     start = timer()
     for i in range(100):
-        X,U,V, _,_ = work(reference,parameter,jnp.tile(x0,(n_robot)),X0,U0,V0)
+        X,U,V, _,_ = work(reference,parameter,x0_,X0,U0,V0)
     end = timer()
-    print(f"Time for N = {N} is {(end-start)/100}")
+    print(f"Time for mpx N = {n_robot} is {(end-start)/100}")
+    x0_acados = np.zeros(n*n_robot)
+    reference_acados = np.zeros((N+1,24*n_robot))
+    parameter_acados = np.zeros((N+1,4*n_contact*n_robot+1))
+    for robot in range(n_robot):
+        x0_acados[3*robot:3+3*robot] = x0_[:3]
+        x0_acados[3*n_robot+3*robot:3*n_robot+3+3*robot] = x0_[3:6]
+        x0_acados[6*n_robot+3*robot:6*n_robot+3+3*robot] = x0_[6:9]
+        x0_acados[9*n_robot+3*robot:9*n_robot+3+3*robot] = x0_[9:12]
+        reference_acados[:,3*robot:3+3*robot] = reference[:,:3]
+        reference_acados[:,3*n_robot+3*robot:3*n_robot+3+3*robot] = reference[:,3:6]
+        reference_acados[:,6*n_robot+3*robot:6*n_robot+3+3*robot] = reference[:,6:9]
+        reference_acados[:,9*n_robot+3*robot:9*n_robot+3+3*robot] = reference[:,9:12]
+        reference_acados[:,12*n_robot+12*robot:12+12*n_robot+12*robot] = reference[:,12:24]
+        parameter_acados[:,4*robot:4+4*robot] = parameter[:,:4]
+        parameter_acados[:,n_contact*n_robot+12*robot:12+n_contact*n_robot+12*robot] = parameter[:,4:16]
+    parameter_acados[:,-1] = np.tile(np.array([dt]),(N+1))
+    srbd_acados_solver.set(0, 'lbx', x0_acados)
+    srbd_acados_solver.set(0, 'ubx', x0_acados)
+    for k in range(N):
+        srbd_acados_solver.set(k, 'p', parameter_acados[k, :])
+        srbd_acados_solver.cost_set(k,'y_ref',reference_acados[k, :])
+    start_acados = timer()
+    for i in range(100):
+        status = srbd_acados_solver.solve()
+    end_acados = timer()
+    print(f"Time for acados N = {n_robot} is {(end_acados-start_acados)/100}")
 # from gym_quadruped.quadruped_env import QuadrupedEnv
 # import numpy as np
 # import copy
