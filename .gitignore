@@ -1,0 +1,7 @@
+plot/
+jax_cache/
+*.json
+*.prof
+*.toml
+c_generated_code/
+**/__pycache__/

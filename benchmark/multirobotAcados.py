@@ -21,7 +21,7 @@ class ocp_formulation:
         # self.cmodel = cpin.Model(model)
         # self.cdata =  self.cmodel.createData()
 
-    def getOptimalProblem(self, dynamic_model="DISCRETE", model_name = "robot", make_model=True,n_robot=1):
+    def getOptimalProblem(self, dynamic_model="DISCRETE", model_name = "robot", make_model=True,n_robot=1,n_batch=1):
 
         mass = 24
         print('mass:\n',mass)
@@ -194,15 +194,23 @@ class ocp_formulation:
         ocp.solver_options.ext_fun_compile_flags = '-O3'
         ocp.solver_options.integrator_type = "DISCRETE"
         # ocp.solver_options.tol = tol
+        if n_batch > 1:
+            ocp.solver_options.num_threads_in_batch_solve = n_batch
         ocp.solver_options.print_level = 0
 
         ocp.solver_options.tf = shooting_nodes[self.N_]
         # ocp.translate_to_feasibility_problem(keep_x0=True, keep_cost=True)
         if make_model :
-            ocp_solver =  AcadosOcpSolver(ocp, json_file = model_name+'acados_ocp.json')
+            if n_batch > 1:
+                ocp_solver = AcadosOcpBatchSolver(ocp, n_batch, json_file = model_name+'acados_ocp.json')
+            else :
+                ocp_solver =  AcadosOcpSolver(ocp, json_file = model_name+'acados_ocp.json')
 
         else :
-            ocp_solver =  AcadosOcpSolver(ocp, json_file = model_name+'acados_ocp.json', build = False, generate = True)
+            if n_batch > 1:
+                ocp_solver = AcadosOcpBatchSolver(ocp, n_batch, json_file = model_name+'acados_ocp.json', build = False, generate = True)
+            else :
+                ocp_solver =  AcadosOcpSolver(ocp, json_file = model_name+'acados_ocp.json', build = False, generate = True)
 
 
         return ocp_solver

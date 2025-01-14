@@ -19,6 +19,9 @@ import numpy as np
 from trajax import integrators
 from trajax.experimental.sqp import util
 
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import  primal_dual_ilqr.primal_dual_ilqr.optimizers as optimizers
 from functools import partial
 
@@ -308,8 +311,10 @@ def cost(x, u, t, reference):
     return jnp.where(t == N, 0.5 * term_cost, 0.5 * stage_cost)
 param_size = 4*n_contact
 from timeit import default_timer as timer
-
-for n_robot in [1,2,4,8,16]:
+times_mpx = []
+times_acados = []
+robots = [1,2,4,8,16]
+for n_robot in robots:
     @jax.jit
     def multi_robot_dynamics(x, u, t,parameter):
         return jnp.concatenate([dynamics(x[n*i:n*i+n], u[m*i:m+m*i], t,parameter[:,i*param_size:param_size+i*param_size]) for i in range(n_robot)], axis=0)
@@ -357,6 +362,7 @@ for n_robot in [1,2,4,8,16]:
         X,U,V, _,_ = work(reference,parameter,x0_,X0,U0,V0)
     end = timer()
     print(f"Time for mpx N = {n_robot} is {(end-start)/100}")
+    times_mpx.append((end-start)/100)
     x0_acados = np.zeros(n*n_robot)
     reference_acados = np.zeros((N+1,24*n_robot))
     parameter_acados = np.zeros((N+1,4*n_contact*n_robot+1))
@@ -383,152 +389,14 @@ for n_robot in [1,2,4,8,16]:
         status = srbd_acados_solver.solve()
     end_acados = timer()
     print(f"Time for acados N = {n_robot} is {(end_acados-start_acados)/100}")
-# from gym_quadruped.quadruped_env import QuadrupedEnv
-# import numpy as np
-# import copy
-# import mujoco
-# from gym_quadruped.utils.mujoco.visual import render_sphere
+    times_acados.append((end_acados-start_acados)/100)
 
-# robot_name = "aliengo"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
-# scene_name = "flat"
-# robot_feet_geom_names = dict(FR='FR',FL='FL', RR='RR' , RL='RL')
-# robot_leg_joints = dict(FR=['FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint', ],
-#                         FL=['FL_hip_joint', 'FL_thigh_joint', 'FL_calf_joint', ],
-#                         RR=['RR_hip_joint', 'RR_thigh_joint', 'RR_calf_joint', ],
-#                         RL=['RL_hip_joint', 'RL_thigh_joint', 'RL_calf_joint'])
-# mpc_frequency = 100.0
-# state_observables_names = tuple(QuadrupedEnv.ALL_OBS)  # return all available state observables
-
-# sim_frequency = 500.0
-
-# env = QuadrupedEnv(robot=robot_name,
-#                    hip_height=0.25,
-#                    legs_joint_names=robot_leg_joints,  # Joint names of the legs DoF
-#                    feet_geom_name=robot_feet_geom_names,  # Geom/Frame id of feet
-#                    scene=scene_name,
-#                    sim_dt = 1/sim_frequency,  # Simulation time step [s]
-#                    ref_base_lin_vel=0.0, # Constant magnitude of reference base linear velocity [m/s]
-#                    ground_friction_coeff=1.5,  # pass a float for a fixed value
-#                    base_vel_command_type="human",  # "forward", "random", "forward+rotate", "human"
-#                 #    state_obs_names=state_observables_names,  # Desired quantities in the 'state'
-#                    )
-# # breakpoint()
-# obs = env.reset(random=False)
-# env.render()
-# timer_t = jnp.array([0000.5,0000.0,0000,0000.5])
-# timer_t_sim = timer_t.copy()
-# contact, timer_t = mpc_utils.timer_run(duty_factor = 0.6, step_freq = 1.35,leg_time=timer_t, dt=dt)
-# liftoff = p_legs0.copy()
-# terrain_height = np.zeros(n_contact)
-
-# init = {}
-# input = {}
-
-# Kp = 10
-# Kd = 2
-
-# Kp_c = np.diag(np.tile(np.array([1000,1000,1000]),n_contact))
-
-# Kd_c = np.diag(np.tile(np.array([10,10,10]),n_contact))
-# counter = 0
-# ids = []
-# for i in range(N*4):
-#      ids.append(render_sphere(viewer=env.viewer,
-#               position = np.array([0,0,0]),
-#               diameter = 0.01,
-#               color=[1,0,0,1]))
-     
-# feet_jac = env.feet_jacobians(frame='world', return_rot_jac=False)
-# J_old = np.concatenate([feet_jac['FL'],feet_jac['FR'],feet_jac['RL'],feet_jac['RR']],axis=0)
-
-# while env.viewer.is_running():
-
-#     qpos = env.mjData.qpos
-#     qvel = env.mjData.qvel
-
-#     if counter % (sim_frequency / mpc_frequency) == 0 or counter == 0:
-
-#         foot_op = np.array([env.feet_pos('world').FL, env.feet_pos('world').FR, env.feet_pos('world').RL, env.feet_pos('world').RR],order="F")
-#         contact_op , timer_t_sim = mpc_utils.timer_run(duty_factor = 0.6, step_freq = 1.35,leg_time=timer_t_sim, dt=dt)
-#         timer_t = timer_t_sim.copy()
-
-#         ref_base_lin_vel, ref_base_ang_vel = env.target_base_vel()
-
-#         p = qpos[:3].copy()
-#         q = qpos[7:].copy()
-
-#         dp = qvel[:3].copy()
-#         omega = qvel[3:6]
-#         dq = qvel[6:].copy()
-
-#         rpy = env.base_ori_euler_xyz.copy()
-#         foot_op_vec = foot_op.flatten()
-#         x0 = jnp.concatenate([p,rpy, dp, omega,p,rpy, dp, omega])
-
-#         input = (ref_base_lin_vel, ref_base_ang_vel, 0.36)
-
-#         start = timer()
-
-#         _ , _ , liftoff,foot_ref_dot,foot_ref_ddot= reference_generator(timer_t, jnp.concatenate([qpos,qvel]), rpy,foot_op_vec, input, duty_factor = 0.6,  step_freq= 1.35 ,step_height=0.08,liftoff=liftoff)   
-
-#         start_mpc = timer()
-
-#         X,U,V, _,_ =  work(reference,parameter,x0,X0,U0,V0)
-#         stop = timer()
-#         U0 = jnp.concatenate([U[1:],U[-1:]])
-#         X0 = jnp.concatenate([X[1:],X[-1:]])
-#         V0 = jnp.concatenate([V[1:],V[-1:]])
-#         grf_ = U[0,:12]
-#         print("MPC time: ",stop-start_mpc)
-#         # print(f"GRF2: {U[0,12:]}")
-#         # for leg in range(n_contact):
-#         #     pleg = reference[:,12:]
-#         #     for i in range(N):
-#         #         render_sphere(viewer=env.viewer,
-#         #                   position = pleg[i,3*leg:3+3*leg],
-#         #                   diameter = 0.01,
-#         #                   color=[parameter[i,leg],1,0,1],
-#         #                   geom_id = ids[leg*N+i])
-#         # for i in range(N):
-#         #     render_sphere(viewer=env.viewer,
-#         #               position = X[i,12:15],
-#         #               diameter = 0.01,
-#         #               color=[1,0,0,1],
-#         #               geom_id = ids[i])
-#         # for i in range(N):
-#         #     render_sphere(viewer=env.viewer,
-#         #               position = reference[i,12:15],
-#         #               diameter = 0.01,
-#         #               color=[0,0,1,1],
-#         #               geom_id = ids[i+N])
-
-#     feet_jac = env.feet_jacobians(frame='world', return_rot_jac=False)
-#     action = np.zeros(env.mjModel.nu)
-#     #PD 
-#     #get foot speed from the joint speed 
-#     start = timer()
-#     foot_speed = np.zeros((3*n_contact))
-#     foot_speed[:3] = (feet_jac['FL'].T @ qvel[6:9])[6:9]
-#     foot_speed[3:6] = (feet_jac['FR'].T @ qvel[9:12])[9:12]
-#     foot_speed[6:9] = (feet_jac['RL'].T @ qvel[12:15])[12:15]
-#     foot_speed[9:] = (feet_jac['RR'].T @ qvel[15:18])[15:18]
-    
-#     cartesian_space_action = Kp_c@(parameter[1,4:16]-foot_op_vec) + Kd_c@(foot_ref_dot[0,:]-foot_speed)
-#     mass_matrix = np.zeros((env.mjModel.nv, env.mjModel.nv))
-#     mujoco.mj_fullM(env.mjModel, mass_matrix, env.mjData.qM)
-#     J = np.concatenate([feet_jac['FL'],feet_jac['FR'],feet_jac['RL'],feet_jac['RR']],axis=0)
-#     J_dot = (J - J_old)*sim_frequency
-#     J_old = J.copy()
-#     accelleration = cartesian_space_action.T + foot_ref_ddot[0,:]
-#     tau_fb_lin = env.mjData.qfrc_bias[6:] + (mass_matrix @ np.linalg.pinv(J) @ (accelleration - J_dot@qvel))[6:]
-#     tau_mpc = -(J.T@grf_)[6:]
-#     tau_PD = (J.T @ cartesian_space_action.T)[6:]
-#     total_tau = np.zeros(n_joints)
-#     for i in range(n_contact):
-#         total_tau[3*i:3+3*i] = contact_op[i]*tau_mpc[3*i:3+3*i] + (1-contact_op[i])*(tau_PD[3*i:3+3*i] + tau_fb_lin[3*i:3+3*i])
-    
-#     env.step(action=total_tau)
-#     counter += 1
-#     env.viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_TRANSPARENT] = True
-#     env.render()
-# env.close()
+import matplotlib.pyplot as plt
+plt.plot(robots, times_mpx, marker='o')
+plt.plot(robots, times_acados, marker='o')
+plt.xlabel('Batch Size (n)')
+plt.ylabel('Average Time (s)')
+plt.title('Average Time vs Batch Size')
+plt.xscale('log')
+plt.grid(True)
+plt.show()

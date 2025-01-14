@@ -18,8 +18,9 @@ import numpy as np
 
 from trajax import integrators
 from trajax.experimental.sqp import util
-
-import  primal_dual_ilqr.primal_dual_ilqr.optimizers as optimizers
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import primal_dual_ilqr.primal_dual_ilqr.optimizers as optimizers
 from functools import partial
 
 from jax import grad, jvp
@@ -155,6 +156,7 @@ u_ref = grf_ref
 
 from timeit import default_timer as timer
 
+
 @jax.jit
 def work(reference,parameter,x0,X0,U0,V0):
     return optimizers.mpc(
@@ -169,6 +171,8 @@ def work(reference,parameter,x0,X0,U0,V0):
     )
 Ns = [20,50,100,200,300,400,500]
 master_key = jax.random.PRNGKey(0)
+times_mpx = []
+times_acados = []
 for N in Ns:
 
     noise_dp_ref = jax.random.normal(master_key, 3) * 0.1
@@ -209,6 +213,8 @@ for N in Ns:
     end = timer()
     print(f"Time for N = {N} is {mpx_time/100}")
     print(f"Time for N = {N} is {acados_time/100}")
+    times_mpx.append(mpx_time/100)
+    times_acados.append(acados_time/100)
 # Ns = [1,2,4,8,16,32,64,128,256,512,1024,2048]
 # N = 20
 # times = []
@@ -238,7 +244,8 @@ for N in Ns:
 #     times.append((end-start)/10)
 
 import matplotlib.pyplot as plt
-plt.plot(Ns, times, marker='o')
+plt.plot(Ns, times_mpx, marker='o')
+plt.plot(Ns, times_acados, marker='o')
 plt.xlabel('Batch Size (n)')
 plt.ylabel('Average Time (s)')
 plt.title('Average Time vs Batch Size')
