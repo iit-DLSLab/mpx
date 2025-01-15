@@ -293,9 +293,17 @@ def cost(x, u, t, reference):
     dp_ref = reference[t,6:9]
     omega_ref = reference[t,9:12]
     # grf_ref = reference[t,12:24]
+    mu = 0.7
+    friction_cone = jnp.array([[0,0,1],[-1,0,mu],[1,0,mu],[0,-1,mu],[0,1,mu]])
+    friction_cone = jnp.kron(jnp.eye(n_contact), friction_cone)
+    friction_cone = friction_cone @ grf
+    alpha = 0.1
+    #use ln(1+exp(x)) as a smooth approximation of max(0,x)
+    friction_cone = 1/alpha*(jnp.log1p(jnp.exp(-alpha*friction_cone)))
 
-    stage_cost = (p - p_ref).T @ Qp @ (p - p_ref) + (rpy-rpy_ref).T@Qrpy@(rpy-rpy_ref) + (dp-dp_ref).T @ Qdp @ (dp-dp_ref) + (omega-omega_ref).T @ Qomega @ (omega-omega_ref) + (grf-grf_ref).T @ Rgrf @ (grf-grf_ref) #+ dq.T @ Rgrf @ dq + (q - q_ref).T @ Qq @ (q - q_ref)
-    term_cost = (p - p_ref).T @ Qp @ (p - p_ref) + (rpy-rpy_ref).T@Qrpy@(rpy-rpy_ref) + (dp-dp_ref).T @ Qdp @ (dp-dp_ref) + (omega-omega_ref).T @ Qomega @ (omega-omega_ref) #+ omega.T @ Qomega @ omega + (q - q_ref).T @ Qq @ (q - q_ref)
+    stage_cost = (p - p_ref).T @ Qp @ (p - p_ref) + (rpy-rpy_ref).T@Qrpy@(rpy-rpy_ref) + (dp-dp_ref).T @ Qdp @ (dp-dp_ref) + (omega-omega_ref).T @ Qomega @ (omega-omega_ref) + (grf-grf_ref).T @ Rgrf @ (grf-grf_ref) +\
+                friction_cone.T @ friction_cone
+    term_cost = (p - p_ref).T @ Qp @ (p - p_ref) + (rpy-rpy_ref).T@Qrpy@(rpy-rpy_ref) + (dp-dp_ref).T @ Qdp @ (dp-dp_ref) + (omega-omega_ref).T @ Qomega @ (omega-omega_ref)
 
     return jnp.where(t == N, 0.5 * term_cost, 0.5 * stage_cost)
 
@@ -359,7 +367,9 @@ obs = env.reset(random=False)
 env.render()
 timer_t = jnp.array([0000.5,0000.0,0000,0000.5])
 timer_t_sim = timer_t.copy()
-contact, timer_t = mpc_utils.timer_run(duty_factor = 0.6, step_freq = 1.35,leg_time=timer_t, dt=dt)
+duty_factor = 0.65
+step_freq = 1.3
+contact, timer_t = mpc_utils.timer_run(duty_factor = duty_factor, step_freq = step_freq,leg_time=timer_t, dt=dt)
 liftoff = p_legs0.copy()
 terrain_height = np.zeros(n_contact)
 
@@ -391,7 +401,7 @@ while env.viewer.is_running():
     if counter % (sim_frequency / mpc_frequency) == 0 or counter == 0:
 
         foot_op = np.array([env.feet_pos('world').FL, env.feet_pos('world').FR, env.feet_pos('world').RL, env.feet_pos('world').RR],order="F")
-        contact_op , timer_t_sim = mpc_utils.timer_run(duty_factor = 0.6, step_freq = 1.35,leg_time=timer_t_sim, dt=dt)
+        contact_op , timer_t_sim = mpc_utils.timer_run(duty_factor = duty_factor, step_freq = step_freq,leg_time=timer_t_sim, dt=dt)
         timer_t = timer_t_sim.copy()
 
         ref_base_lin_vel, ref_base_ang_vel = env.target_base_vel()
@@ -411,8 +421,8 @@ while env.viewer.is_running():
 
         start = timer()
 
-        reference , parameter , liftoff,foot_ref_dot,foot_ref_ddot= reference_generator(timer_t, jnp.concatenate([qpos,qvel]), rpy,foot_op_vec, input, duty_factor = 0.6,  step_freq= 1.35 ,step_height=0.08,liftoff=liftoff)   
-        
+        reference , parameter , liftoff,foot_ref_dot,foot_ref_ddot= reference_generator(timer_t, jnp.concatenate([qpos,qvel]), rpy,foot_op_vec, input, duty_factor = duty_factor,  step_freq= step_freq ,step_height=0.08,liftoff=liftoff)
+
         start_mpc = timer()
 
         X,U,V, _,_ =  work(reference,parameter,x0,X0,U0,V0)
@@ -442,8 +452,8 @@ while env.viewer.is_running():
     foot_speed[3:6] = (feet_jac['FR'].T @ qvel[9:12])[9:12]
     foot_speed[6:9] = (feet_jac['RL'].T @ qvel[12:15])[12:15]
     foot_speed[9:] = (feet_jac['RR'].T @ qvel[15:18])[15:18]
-    
-    cartesian_space_action = Kp_c@(parameter[1,4:]-foot_op_vec) + Kd_c@(foot_ref_dot[0,:]-foot_speed)
+
+    cartesian_space_action = Kp_c@(parameter[1,4:16]-foot_op_vec) + Kd_c@(foot_ref_dot[0,:]-foot_speed)
     mass_matrix = np.zeros((env.mjModel.nv, env.mjModel.nv))
     mujoco.mj_fullM(env.mjModel, mass_matrix, env.mjData.qM)
     J = np.concatenate([feet_jac['FL'],feet_jac['FR'],feet_jac['RL'],feet_jac['RR']],axis=0)
