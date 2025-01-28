@@ -11,6 +11,7 @@
       <joint damping="0.5" armature="0.01" frictionloss="0.1"/>
       <default class="arm_joint">
         <motor ctrlrange="-20 20"/>
+        <joint damping="0.05" armature="0.01" frictionloss="0.05"/>
       </default>
       <default class="hand_joint">
         <motor ctrlrange="-0.7 0.7"/>
@@ -125,7 +126,7 @@
                   <geom name = "3_left" pos="-0.06 -0.02 -0.03" class="foot"/>
                   <geom name = "0_left" pos="0.13 0.02 -0.03" class="foot"/>
                   <geom name = "1_left" pos="0.13 -0.02 -0.03" class="foot"/>
-                  <geom name = "foot_left" pos="0.095 0 -0.03" class="foot"/>
+                  <!-- <geom name = "foot_left" pos="0.095 0 -0.03" class="foot"/> -->
                 </body>
               </body>
             </body>
@@ -172,7 +173,7 @@
                   <geom name = "3_right" pos="-0.06 -0.02 -0.03" class="foot"/>
                   <geom name = "0_right" pos="0.13 0.02 -0.03" class="foot"/>
                   <geom name = "1_right" pos="0.13 -0.02 -0.03" class="foot"/>
-                  <geom name = "foot_right" pos="0.095 0 -0.03" class="foot"/>
+                  <!-- <geom name = "foot_right" pos="0.095 0 -0.03" class="foot"/> -->
                 </body>
               </body>
             </body>
