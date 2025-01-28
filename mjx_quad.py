@@ -30,7 +30,7 @@ from jax import grad, jvp
 from jax.scipy.spatial.transform import Rotation
 
 
-from primal_dual_ilqr.utils.rotation import quaternion_integration,rpy_intgegration
+from primal_dual_ilqr.utils.rotation import quaternion_integration,rpy_intgegration,quaternion_to_rpy
 
 import mujoco
 from mujoco import mjx
@@ -59,7 +59,7 @@ robot_leg_joints = dict(FR=['FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint', ]
                         FL=['FL_hip_joint', 'FL_thigh_joint', 'FL_calf_joint', ],
                         RR=['RR_hip_joint', 'RR_thigh_joint', 'RR_calf_joint', ],
                         RL=['RL_hip_joint', 'RL_thigh_joint', 'RL_calf_joint'])
-mpc_frequency = 50.0
+mpc_frequency = 25.0
 state_observables_names = tuple(QuadrupedEnv.ALL_OBS)  # return all available state observables
 
 sim_frequency = 200.0
@@ -74,6 +74,9 @@ env = QuadrupedEnv(robot=robot_name,
                    base_vel_command_type="human",  # "forward", "random", "forward+rotate", "human"
                    state_obs_names=state_observables_names,  # Desired quantities in the 'state'
                    )
+# env.mjModel = mujoco.MjModel.from_xml_path('./data/go2/scene_mjx.xml')
+# env.mjModel.opt.timestep = 1/sim_frequency
+# env.mjData = mujoco.MjData(env.mjModel)
 obs = env.reset(random=False)
 @jax.jit
 def reference_generator(t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
@@ -113,8 +116,6 @@ def reference_generator(t_timer, x, foot, input, duty_factor, step_freq,step_hei
         liftoff_x = jnp.where(jnp.logical_and(jnp.logical_not(contact_sequence[t,:]),contact_sequence[t-1,:]),new_foot_x,liftoff_x)
         liftoff_y = jnp.where(jnp.logical_and(jnp.logical_not(contact_sequence[t,:]),contact_sequence[t-1,:]),new_foot_y,liftoff_y)
         liftoff_z = jnp.where(jnp.logical_and(jnp.logical_not(contact_sequence[t,:]),contact_sequence[t-1,:]),new_foot_z,liftoff_z)
-
-        
         
         def calc_foothold(direction):
             f1 = 0.5*ref_lin_vel[direction]*duty_factor/step_freq
@@ -164,7 +165,7 @@ def reference_generator(t_timer, x, foot, input, duty_factor, step_freq,step_hei
     liftoff = liftoff.at[2::3].set(liftoff_z)
 
     # foot to world frame
-    foot_ref = foot_ref + jnp.tile(p,(N+1,n_contact))
+    # foot_ref = foot_ref@jax.scipy.linalg.block_diag(Ryaw,Ryaw,Ryaw,Ryaw) + jnp.tile(p,(N+1,n_contact))
     return jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref, foot_ref], axis=1), jnp.concatenate([contact_sequence, foot_ref], axis=1), liftoff
 
 
@@ -394,6 +395,8 @@ for i in range(N*4):
 ref = []
 ref_history = []
 actual = []
+tau_new = np.zeros(n_joints)
+flag = False
 while env.viewer.is_running():
 
     qpos = env.mjData.qpos
@@ -401,7 +404,7 @@ while env.viewer.is_running():
     if counter % (sim_frequency / mpc_frequency) == 0 or counter == 0:
 
         foot_op = np.array([env.feet_pos('world').FL, env.feet_pos('world').FR, env.feet_pos('world').RL, env.feet_pos('world').RR],order="F")
-        contact_op , timer_t_sim = mpc_utils.timer_run(duty_factor = 0.6, step_freq = 1.35,leg_time=timer_t_sim, dt=dt)
+        contact_op , timer_t_sim = mpc_utils.timer_run(duty_factor = 0.6, step_freq = 1.35,leg_time=timer_t_sim, dt=dt*2)
         timer_t = timer_t_sim.copy()
 
         ref_base_lin_vel, ref_base_ang_vel = env.target_base_vel()
@@ -429,6 +432,7 @@ while env.viewer.is_running():
         U0 = jnp.concatenate([U[1:],U[-1:]])
         X0 = jnp.concatenate([X[1:],X[-1:]])
         V0 = jnp.concatenate([V[1:],V[-1:]])
+        flag = False
         
         # for leg in range(n_contact):
         #     pleg = reference[:,13+n_joints:]
@@ -446,13 +450,16 @@ while env.viewer.is_running():
         #                   color=[1,0,0,1],
         #                   geom_id = ids[i]) 
         tau = U[0,:n_joints]
+        tau_new = U[1,:n_joints]
         # ref.append(reference[0,13+n_joints:])
         actual.append(foot_op_vec)
         # print('tau:\n',tau)
     # action = np.zeros(env.mjModel.nu)
-
+    if counter % (sim_frequency / mpc_frequency*2) == 0 and flag:
+        tau = tau_new
+    flag = True
     #PD
-    # print(catisian_space_action.shape)
+
     # env.mjData.qpos = res[:n_joints+7]
     # env.mjData.qvel = res[n_joints+7:]
     state, reward, is_terminated, is_truncated, info = env.step(action=tau)

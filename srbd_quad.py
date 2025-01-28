@@ -30,6 +30,7 @@ from jax.scipy.spatial.transform import Rotation
 
 from primal_dual_ilqr.utils.rotation import quaternion_integration,rpy_intgegration
 import primal_dual_ilqr.utils.mpc_utils as mpc_utils
+import benchmark.multirobotAcados as acd
 gpu_device = jax.devices('gpu')[0]
 jax.default_device(gpu_device)
 
@@ -37,7 +38,7 @@ jax.default_device(gpu_device)
 
 
 # Problem dimensions
-N = 30  # Number of stages
+N = 50  # Number of stages
 n = 12   # Number of states (theta1, theta1_dot, theta2, theta2_dot)
 m = 12    # Number of controls (F)
 dt = 0.01  # Time step
@@ -58,16 +59,14 @@ w_H_b0 = jnp.block([
     [jnp.eye(3), jnp.array([[0], [0], [0.33]])],
     [jnp.zeros((1, 3)), jnp.array([[1]])]
 ])
-q0 = jnp.array([0,0.8,-1.8,0,0.8,-1.8,0,0.8,-1.8,0,0.8,-1.8])
-
-mass = 24
-print('mass:\n',mass)
-inertia = jnp.array([[ 2.5719824e-01,  1.3145953e-03, -1.6161108e-02],[ 1.3145991e-03,  1.0406910e+00,  1.1957530e-04],[-1.6161105e-02,  1.1957530e-04,  1.0870107e+00]])
-print('inertia',inertia)
+q0 = jnp.array([0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8])
+mass = 15.019
+inertia = jnp.array([[1.58460467e-01, 1.21660000e-04, -1.55444692e-02],
+                    [1.21660000e-04, 4.68645637e-01, -3.12000000e-05],
+                    [-1.55444692e-02, -3.12000000e-05, 5.24474661e-01]])
 
 inertia_inv = jnp.linalg.inv(inertia)
-p_legs0 = jnp.array([ 0.2717287,   0.13780001,  0.02074774,  0.2717287,  -0.13780001,  0.02074774, -0.20967132,  0.13780001,  0.02074774, -0.20967132, -0.13780001,  0.02074774])
-print('leg:\n',p_legs0)
+p_legs0 = jnp.array([ 0.192, 0.142, 0.024,  0.192, -0.142, 0.024,-0.195,  0.142,  0.024, -0.195, -0.142, 0.024])
 @jax.jit
 def reference_generator(t_timer, x,rpy, foot, input, duty_factor, step_freq,step_height,liftoff):
 
@@ -94,9 +93,11 @@ def reference_generator(t_timer, x,rpy, foot, input, duty_factor, step_freq,step
     dp_ref = jnp.tile(ref_lin_vel, (N+1, 1))
     omega_ref = jnp.tile(ref_ang_vel, (N+1, 1))
     contact_sequence = jnp.zeros(((N+1), n_contact))
-    Rz = rot_yaw(rpy[2])
-    
-    foot_ref = jnp.tile(foot-jnp.tile(p,(1,n_contact))@jax.scipy.linalg.block_diag(Rz,Rz,Rz,Rz), (N+1, 1))
+    foot_ref = jnp.tile(foot, (N+1, 1))
+    yaw = jnp.arctan2(2*(quat[0]*quat[3] + quat[1]*quat[2]), 1 - 2*(quat[2]*quat[2] + quat[3]*quat[3]))
+    Ryaw = jnp.array([[jnp.cos(yaw), -jnp.sin(yaw), 0],[jnp.sin(yaw), jnp.cos(yaw), 0],[0, 0, 1]])
+    foot_ref = jnp.tile(foot, (N+1, 1))
+    foot0 = jnp.tile(p,n_contact) + jnp.array([ 0.192, 0.142, 0.024,  0.192, -0.142, 0.024,-0.195,  0.142,  0.024, -0.195, -0.142, 0.024])@jax.scipy.linalg.block_diag(Ryaw,Ryaw,Ryaw,Ryaw).T
     foot_ref_dot = jnp.zeros(((N+1), 3*n_contact))
     foot_ref_ddot = jnp.zeros(((N+1), 3*n_contact))
 
@@ -109,21 +110,19 @@ def reference_generator(t_timer, x,rpy, foot, input, duty_factor, step_freq,step
         new_foot_z = new_foot[t-1,2::3]
 
         new_contact_sequence, new_t = mpc_utils.timer_run(duty_factor, step_freq, new_t, dt)
-        
+
         contact_sequence = contact_sequence.at[t,:].set(new_contact_sequence)
 
         liftoff_x = jnp.where(jnp.logical_and(jnp.logical_not(contact_sequence[t,:]),contact_sequence[t-1,:]),new_foot_x,liftoff_x)
         liftoff_y = jnp.where(jnp.logical_and(jnp.logical_not(contact_sequence[t,:]),contact_sequence[t-1,:]),new_foot_y,liftoff_y)
         liftoff_z = jnp.where(jnp.logical_and(jnp.logical_not(contact_sequence[t,:]),contact_sequence[t-1,:]),new_foot_z,liftoff_z)
 
-        foot0 = jnp.array([ 0.2717287,   0.13780001,  0.02074774,  0.2717287,  -0.13780001,  0.02074774, -0.20967132,  0.13780001,  0.02074774, -0.20967132, -0.13780001,  0.02074774])
-
         def calc_foothold(direction):
             f1 = 0.5*ref_lin_vel[direction]*duty_factor/step_freq
             f2 = jnp.sqrt(robot_height/9.81)*(dp[direction]-ref_lin_vel[direction])
             f = f1 + f2 + foot0[direction::3]
             return f
-        
+
         foothold_x = calc_foothold(0)
         foothold_y = calc_foothold(1)
 
@@ -132,9 +131,9 @@ def reference_generator(t_timer, x,rpy, foot, input, duty_factor, step_freq,step
             a0 = current_foot
             a1 = 0
             a2 = 3*(foothold - current_foot)
-            a3 = -2/3*a2 
+            a3 = -2/3*a2
             return a0 + a1*val + a2*val**2 + a3*val**3
-        
+
         @jax.jit
         def cubic_splineZ(current_foot, foothold, step_height,val):
             # a0 = current_foot
@@ -146,14 +145,14 @@ def reference_generator(t_timer, x,rpy, foot, input, duty_factor, step_freq,step
             a2 = -foothold +a0 -2*a3
             a1 = +2*foothold -2*a0 +a3
             return a0 + a1*val + a2*val**2 + a3*val**3
-        
+
         @jax.jit
         def cubic_splineXY_dot(current_foot, foothold,val):
             a1 = 0
             a2 = 3*(foothold - current_foot)
-            a3 = -2/3*a2 
+            a3 = -2/3*a2
             return 2*a2*val + 3*a3*val**2
-        
+
         @jax.jit
         def cubic_splineZ_dot(current_foot, foothold, step_height,val):
             a0 = current_foot
@@ -161,14 +160,14 @@ def reference_generator(t_timer, x,rpy, foot, input, duty_factor, step_freq,step
             a2 = -foothold +a0 -2*a3
             a1 = +2*foothold -2*a0 +a3
             return a1 + 2*a2*val + 3*a3*val**2
-        
+
         @jax.jit
         def cubic_splineXY_ddot(current_foot, foothold,val):
             a1 = 0
             a2 = 3*(foothold - current_foot)
-            a3 = -2/3*a2 
+            a3 = -2/3*a2
             return 2*a2 + 6*a3*val
-        
+
         @jax.jit
         def cubic_splineZ_ddot(current_foot, foothold, step_height,val):
             a0 = current_foot
@@ -195,7 +194,7 @@ def reference_generator(t_timer, x,rpy, foot, input, duty_factor, step_freq,step
         new_foot_ddot = new_foot_ddot.at[t,2::3].set(jnp.where(new_contact_sequence>0, 0, cubic_splineZ_ddot(liftoff_z,liftoff_z,liftoff_z + step_height,(new_t-duty_factor)/(1-duty_factor))))
 
         return (new_t, contact_sequence,new_foot,new_foot_dot,new_foot_ddot,liftoff_x,liftoff_y,liftoff_z)
-    
+
     liftoff_x = liftoff[::3]
     liftoff_y = liftoff[1::3]
     liftoff_z = liftoff[2::3]
@@ -207,9 +206,9 @@ def reference_generator(t_timer, x,rpy, foot, input, duty_factor, step_freq,step
     liftoff = liftoff.at[1::3].set(liftoff_y)
     liftoff = liftoff.at[2::3].set(liftoff_z)
     # foot to world frame
-    
-    foot_ref = foot_ref@jax.scipy.linalg.block_diag(Rz,Rz,Rz,Rz).T + jnp.tile(p,(N+1,n_contact))
-    return jnp.concatenate([p_ref, rpy_ref, dp_ref, omega_ref, foot_ref], axis=1), jnp.concatenate([contact_sequence, foot_ref], axis=1), liftoff,foot_ref_dot,foot_ref_ddot
+    grf_ref = jnp.zeros((N+1,3*n_contact))
+    # return jnp.concatenate([p_ref, rpy_ref, dp_ref, omega_ref, grf_ref], axis=1), jnp.concatenate([contact_sequence, foot_ref,jnp.tile(dt,(N+1,1))], axis=1), liftoff,foot_ref_dot,foot_ref_ddot
+    return jnp.concatenate([p_ref, rpy_ref, dp_ref, omega_ref, grf_ref], axis=1), jnp.concatenate([contact_sequence, foot_ref], axis=1), liftoff,foot_ref_dot,foot_ref_ddot
 
 
 
@@ -253,13 +252,13 @@ def dynamics(x, u, t,parameter):
 
     return x_next
 
-p0 = jnp.array([0, 0, 0.33])
+p0 = jnp.array([0, 0, 0.28])
 quat0 = jnp.array([1, 0, 0, 0])
 rpy0 = jnp.array([0, 0, 0])
 x0 = jnp.concatenate([p0, rpy0, jnp.zeros(3), jnp.array([0, 0, 0])])
 grf0 = jnp.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 
-p_ref = jnp.array([0, 0, 0.4])
+p_ref = jnp.array([0, 0, 0.28])
 quat_ref = jnp.array([0, 0, 0, 1])
 rpy_ref = jnp.array([0, 0, 0])
 q_ref = jnp.array([0, 0.8, -1.8, 0, 0.8, -1.8, 0, 0.8, -1.8, 0, 0.8, -1.8])
@@ -267,7 +266,7 @@ dp_ref = jnp.array([0, 0, 0])
 omega_ref = jnp.array([0, 0, 0])
 dq_ref = jnp.zeros(n_joints)
 
-grf_ref = jnp.zeros(3 * n_contact)  
+grf_ref = jnp.zeros(3 * n_contact)
 
 u_ref = grf_ref
 
@@ -316,13 +315,14 @@ parameter = jnp.tile(jnp.concatenate([jnp.ones(4),p_legs0]),(N+1,1))
 
 from timeit import default_timer as timer
 
-mu = 1e-3
+# mu = 1e-3
 
 @jax.jit
 def work(reference,parameter,x0,X0,U0,V0):
     return optimizers.mpc(
         cost,
         dynamics,
+        False,
         reference,
         parameter,
         x0,
@@ -330,6 +330,7 @@ def work(reference,parameter,x0,X0,U0,V0):
         U0,
         V0,
     )
+X,U,V= work(reference,parameter,x0,X0,U0,V0)
 
 print("Simulation started")
 
@@ -339,7 +340,7 @@ import copy
 import mujoco
 from gym_quadruped.utils.mujoco.visual import render_sphere
 
-robot_name = "aliengo"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
+robot_name = "go2"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
 scene_name = "flat"
 robot_feet_geom_names = dict(FR='FR',FL='FL', RR='RR' , RL='RL')
 robot_leg_joints = dict(FR=['FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint', ],
@@ -349,7 +350,7 @@ robot_leg_joints = dict(FR=['FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint', ]
 mpc_frequency = 100.0
 state_observables_names = tuple(QuadrupedEnv.ALL_OBS)  # return all available state observables
 
-sim_frequency = 500.0
+sim_frequency = 200.0
 
 env = QuadrupedEnv(robot=robot_name,
                    hip_height=0.25,
@@ -379,7 +380,7 @@ input = {}
 Kp = 10
 Kd = 2
 
-Kp_c = np.diag(np.tile(np.array([1000,1000,1000]),n_contact))
+Kp_c = np.diag(np.tile(np.array([500,500,500]),n_contact))
 
 Kd_c = np.diag(np.tile(np.array([10,10,10]),n_contact))
 counter = 0
@@ -389,9 +390,22 @@ for i in range(N*4):
               position = np.array([0,0,0]),
               diameter = 0.01,
               color=[1,0,0,1]))
-     
+
 feet_jac = env.feet_jacobians(frame='world', return_rot_jac=False)
 J_old = np.concatenate([feet_jac['FL'],feet_jac['FR'],feet_jac['RL'],feet_jac['RR']],axis=0)
+mpc_time = 0
+mpc_counter = 0
+
+
+args = {}
+make_model = True
+
+args['N'] = N # Horizon lenght
+args['dt'] = dt # delta time between the integration node
+
+# srbd_acados = acd.ocp_formulation(args)
+# srbd_acados_solver = srbd_acados.getOptimalProblem(model_name = "srbd")
+
 
 while env.viewer.is_running():
 
@@ -417,22 +431,36 @@ while env.viewer.is_running():
         foot_op_vec = foot_op.flatten()
         x0 = jnp.concatenate([p,rpy, dp, omega])
 
-        input = (ref_base_lin_vel, ref_base_ang_vel, 0.36)
+        input = (ref_base_lin_vel, ref_base_ang_vel, 0.28)
 
         start = timer()
 
         reference , parameter , liftoff,foot_ref_dot,foot_ref_ddot= reference_generator(timer_t, jnp.concatenate([qpos,qvel]), rpy,foot_op_vec, input, duty_factor = duty_factor,  step_freq= step_freq ,step_height=0.08,liftoff=liftoff)
 
-        start_mpc = timer()
+        # srbd_acados_solver.set(0, 'lbx', x0)
+        # srbd_acados_solver.set(0, 'ubx', x0)
 
-        X,U,V, _,_ =  work(reference,parameter,x0,X0,U0,V0)
+        # for k in range(N):
+        #     srbd_acados_solver.set(k, 'p', np.array(parameter[k, :]))
+        #     srbd_acados_solver.cost_set(k,'y_ref',np.array(reference[k, :]))
+        start_mpc = timer()
+        X,U,V =  work(reference,parameter,x0,X0,U0,V0)
+        # srbd_acados_solver.solve()
+        X.block_until_ready()
         stop = timer()
-        print(f"Execution time Reference Generator: {start_mpc-start}")
-        print(f"Execution time MPC: {stop-start_mpc}")
+        if mpc_counter != 0:
+            mpc_time += stop-start_mpc
+            # mpc_time += srbd_acados_solver.get_stats('time_tot')
+            print(f"average execution time MPC: {mpc_time/mpc_counter}")
+            mpc_counter += 1
+        else:
+            mpc_counter += 1
+
         U0 = jnp.concatenate([U[1:],U[-1:]])
         X0 = jnp.concatenate([X[1:],X[-1:]])
         V0 = jnp.concatenate([V[1:],V[-1:]])
         grf_ = U[0,:]
+        # grf_ = srbd_acados_solver.get(0,'u')
         for leg in range(n_contact):
             pleg = reference[:,12:]
             for i in range(N):
@@ -444,8 +472,8 @@ while env.viewer.is_running():
 
     feet_jac = env.feet_jacobians(frame='world', return_rot_jac=False)
     action = np.zeros(env.mjModel.nu)
-    #PD 
-    #get foot speed from the joint speed 
+    #PD
+    #get foot speed from the joint speed
     start = timer()
     foot_speed = np.zeros((3*n_contact))
     foot_speed[:3] = (feet_jac['FL'].T @ qvel[6:9])[6:9]
@@ -470,7 +498,7 @@ while env.viewer.is_running():
     # action[env.legs_tau_idx.FR] = (feet_jac['FR'].T @ ((1-contact_op[1])*catisian_space_action[3:6]-grf_[3:6]))[9:12]
     # action[env.legs_tau_idx.RL] = (feet_jac['RL'].T @ ((1-contact_op[2])*catisian_space_action[6:9]-grf_[6:9]))[12:15]
     # action[env.legs_tau_idx.RR] = (feet_jac['RR'].T @ ((1-contact_op[3])*catisian_space_action[9:]-grf_[9:] ))[15:18]
-    
+
     env.step(action=total_tau)
     counter += 1
     env.render()
