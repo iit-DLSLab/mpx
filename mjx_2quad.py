@@ -104,7 +104,7 @@ class SimInput:
         Ryaw = np.array([[np.cos(yaw), -np.sin(yaw), 0],[np.sin(yaw), np.cos(yaw), 0],[0, 0, 1]])
         return Ryaw@self._ref_base_lin_vel_H
 @jax.jit
-def reference_generator(t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
+def reference_generator(t_timer,ref_pos,x, foot, input, duty_factor, step_freq,step_height,liftoff):
     p = x[:3]
     quat = x[3:7]
     # q = x[7:7+n_joints]
@@ -113,8 +113,8 @@ def reference_generator(t_timer, x, foot, input, duty_factor, step_freq,step_hei
     # dq = x[13+n_joints:13+2*n_joints]
     ref_lin_vel, ref_ang_vel, robot_height = input
     p = jnp.array([p[0], p[1], robot_height])
-    p_ref_x = jnp.arange(N+1) * dt * ref_lin_vel[0] + p[0]
-    p_ref_y = jnp.arange(N+1) * dt * ref_lin_vel[1] + p[1]
+    p_ref_x = jnp.arange(N+1) * dt * ref_lin_vel[0] + ref_pos[0]
+    p_ref_y = jnp.arange(N+1) * dt * ref_lin_vel[1] + ref_pos[1]
     p_ref_z = jnp.ones(N+1) * robot_height
     p_ref = jnp.stack([p_ref_x, p_ref_y, p_ref_z], axis=1)
     quat_ref = jnp.tile(jnp.array([1, 0, 0, 0]), (N+1, 1))
@@ -208,7 +208,7 @@ n_joints = len(joints_name)
 n_contact = len(contact_frame)
 
 # Problem dimensions
-N = 15  # Number of stages
+N = 50 # Number of stages
 n =  13 + 2*n_joints + 6*n_contact  # Number of states (theta1, theta1_dot, theta2, theta2_dot)
 m = n_joints  # Number of controls (F)
 dt = 0.02  # Time step
@@ -312,14 +312,15 @@ tau_ref = jnp.zeros(n_joints)
 u_ref = jnp.concatenate([tau_ref])
 
 Qp = jnp.diag(jnp.array([0, 0, 1e4]))
-Qq = jnp.diag(jnp.ones(n_joints)) * 1e-1
-Qdp = jnp.diag(jnp.array([1, 1, 1]))*1e3
-Qomega = jnp.diag(jnp.array([1, 1, 1]))*1e2
+QpN = jnp.diag(jnp.array([5e3, 5e3, 1e4]))
+Qq = jnp.diag(jnp.ones(n_joints)) * 1e2
+Qdp = jnp.diag(jnp.array([100, 100, 1000]))
+Qomega = jnp.diag(jnp.array([1, 1, 1]))*1e1
 Qdq = jnp.diag(jnp.ones(n_joints)) * 1e-1
 Rgrf = jnp.diag(jnp.ones(3 * n_contact)) * 1e-3
 Qrot = jnp.diag(jnp.array([500,500,0]))
 Qtau = jnp.diag(jnp.ones(n_joints)) * 1e-1
-Qleg = jnp.diag(jnp.tile(jnp.array([1e3,1e3,1e5]),n_contact))
+Qleg = jnp.diag(jnp.tile(jnp.array([1e1,1e1,1e5]),n_contact))
 Qpenalty = jnp.diag(jnp.ones(5*n_contact))
 QpenaltyZ = jnp.diag(jnp.ones(3*n_contact))*10
 # Define the cost function
@@ -366,7 +367,7 @@ def cost(x, u, t, reference):
                  tau.T @ Qtau @ tau +\
                  (p_leg - p_leg_ref).T @ Qleg @ (p_leg - p_leg_ref) #+\
                 #  friction_cone.T @ Qpenalty @ friction_cone
-    term_cost = (p - p_ref).T @ Qp @ (p - p_ref) + (dp-dp_ref).T @ Qdp @ (dp-dp_ref) + (omega-omega_ref).T @ Qomega @ (omega-omega_ref)
+    term_cost = (p - p_ref).T @ QpN @ (p - p_ref) + (dp-dp_ref).T @ Qdp @ (dp-dp_ref) + (omega-omega_ref).T @ Qomega @ (omega-omega_ref)
 
 
     return jnp.where(t == N, 0.5 * term_cost, 0.5 * stage_cost)
@@ -375,6 +376,7 @@ def cost(x, u, t, reference):
 # reference = jnp.tile(jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref,p_legs0]), (N + 1, 1))
 # parameter = jnp.tile(jnp.concatenate([jnp.ones(4),p_legs0]),(N+1,1))
 from timeit import default_timer as timer
+import pickle
 param_size = n_contact + 3*n_contact
 reference_size = 13 + n_joints + 3*n_contact
 n_robot = 2
@@ -386,15 +388,17 @@ def multi_robot_dynamics(x, u, t,parameter):
 def multi_robot_cost(x, u, t, reference):
     p1 = x[:3]
     p2 = x[61:64]
-    distance = jnp.sum((p1 - p2) ** 2)
-    distance_penalty = -jnp.log(distance - 0.64)
+    distance = math.norm(p1-p2)
+    distance_penalty = jnp.max(jnp.array([0,(0.8-distance)]))
+    distance_penalty = 5e2*distance_penalty**2
     return cost(x[:61], u[:12], t, reference[:,:reference_size]) + cost(x[61:], u[12:], t, reference[:,reference_size:]) + distance_penalty
 U0 = jnp.tile(jnp.tile(u_ref,(1,n_robot)), (N, 1))
 X0 = jnp.tile(jnp.tile(x0,(1,n_robot)), (N + 1, 1))
 V0 = jnp.zeros((N + 1, n*n_robot ))
-reference = jnp.tile(jnp.tile(jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref,p_legs0]), (1, n_robot)), (N + 1, 1))
-parameter = jnp.tile(jnp.tile(jnp.concatenate([jnp.ones(4), p_legs0]), (1, n_robot)), (N + 1, 1))
-
+reference = jnp.tile(jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref,p_legs0]), (1, n_robot))
+parameter = jnp.tile(jnp.concatenate([jnp.ones(4), p_legs0]), (1, n_robot))
+reference_1 = reference
+reference_2 = reference
 @jax.jit
 def work(reference,parameter,x0,X0,U0,V0):
     return optimizers.mpc(
@@ -435,7 +439,8 @@ tau_new = np.zeros(n_joints)
 flag = False
 sim_model = mujoco.MjModel.from_xml_path('./data/go2/scene_mjx_two.xml')
 sim_data = mujoco.MjData(sim_model)
-sim_data.qpos = jnp.concatenate([p0, quat0, q0,p0+jnp.array([1,0,0]), quat0, q0])
+quat1 = jnp.array([jnp.cos(3.14 / 4), 0, 0, jnp.sin(3.14 / 4)])
+sim_data.qpos = jnp.concatenate([p0+jnp.array([-1.5,0.05,0]), quat0, q0,p0+jnp.array([0,-1.5,0]), quat1, q0])
 sim_model.opt.timestep = 1 / sim_frequency
 contact_list = ['FL','FR','RL','RR','second_FL','second_FR','second_RL','second_RR']
 contact_list_id = []
@@ -444,7 +449,16 @@ for name in contact_list:
 sim_input = SimInput(0.28)
 def key_callback_wrapper(keycode):
     sim_input.key_callback(keycode)
+sim_data_record = []
 with mujoco.viewer.launch_passive(sim_model, sim_data, key_callback=key_callback_wrapper) as viewer:
+    ids = []
+    for i in range(N*8):
+         ids.append(render_sphere(viewer=viewer,
+                  position = np.array([0,0,0]),
+                  diameter = 0.01,
+                  color=[1,0,0,1]))
+    # print("ids: ",len(ids))
+    forward_speed = 0.8
     while viewer.is_running():
         qpos = sim_data.qpos
         qvel = sim_data.qvel
@@ -455,11 +469,12 @@ with mujoco.viewer.launch_passive(sim_model, sim_data, key_callback=key_callback
             timer_t = timer_t_sim.copy()
             foot_op_vec = foot_op.flatten()
             x0 = jnp.concatenate([qpos[:19], qvel[:18],foot_op_vec[:12],jnp.zeros(12),qpos[19:], qvel[18:],foot_op_vec[12:],jnp.zeros(12)])   
-            input = (sim_input.get_ref_base_lin_vel_W(qpos[3:7]),np.array([0,0,sim_input._ref_base_ang_yaw_dot]) , 0.28)
-            reference_1 , parameter_1 , liftoff_1 = reference_generator(timer_t, jnp.concatenate([qpos[:19],qvel[:18]]), foot_op_vec[:12], input, duty_factor = 0.6,  step_freq= 1.35 ,step_height=0.08,liftoff=liftoff_1)
-            input = (np.array([0,0,0]), np.zeros(3), 0.28)
-            reference_2 , parameter_2 , liftoff_2 = reference_generator(timer_t, jnp.concatenate([qpos[19:],qvel[18:]]), foot_op_vec[12:], input, duty_factor = 0.6,  step_freq= 1.35 ,step_height=0.08,liftoff=liftoff_2)
-            
+            # input = (np.array([forward_speed,np.clip(-5*qpos[1],a_min=None,a_max=0.02),0]),np.array([0,0,sim_input._ref_base_ang_yaw_dot]) , 0.28)
+            input = (np.array([0.5,0.0,0.0]),jnp.zeros(3),0.28)
+            reference_1 , parameter_1 , liftoff_1 = reference_generator(timer_t,jnp.array([qpos[0],0.05]),jnp.concatenate([qpos[:19],qvel[:18]]), foot_op_vec[:12], input, duty_factor = 0.65,  step_freq= 1.4 ,step_height=0.08,liftoff=liftoff_1)
+            # input = (np.array([np.clip(-5*qpos[19],a_min=None,a_max=0.02),forward_speed,0]), np.zeros(3), 0.28)
+            input = (np.array([0.0,0.5,0.0]),jnp.zeros(3),0.28)
+            reference_2 , parameter_2 , liftoff_2 = reference_generator(timer_t,jnp.array([0,qpos[20]]),jnp.concatenate([qpos[19:],qvel[18:]]), foot_op_vec[12:], input, duty_factor = 0.65,  step_freq= 1.4 ,step_height=0.08,liftoff=liftoff_2)  
             reference = jnp.concatenate([reference_1,reference_2],axis=1)
             parameter = jnp.concatenate([parameter_1,parameter_2],axis=1)
             start = timer()
@@ -469,13 +484,52 @@ with mujoco.viewer.launch_passive(sim_model, sim_data, key_callback=key_callback
             # print(f"Time elapsed: {stop-start}")
             distance = jnp.linalg.norm(x0[:3] - x0[61:64])
             print(f"Distance between the two COMs: {distance}")
+            # viewer.user_scn.ngeom = 1
+            n_sphere = 0
+            for i in range(N):
+                for leg in range(n_contact):
+                    render_sphere(viewer=viewer,
+                          position = np.array(reference_2[i,13+n_joints+leg*3:13+n_joints+leg*3+3]),
+                          diameter = 0.01,
+                          color=[0,1,0,1],
+                          geom_id = ids[n_sphere])
+                    n_sphere += 1
+                render_sphere(viewer=viewer,
+                          position = np.array(X[i,61:64]),
+                          diameter = 0.01,
+                          color=[0,1,0,1],
+                          geom_id = ids[n_sphere])
+                n_sphere += 1
+                render_sphere(viewer=viewer,
+                          position = np.array(reference_2[i,:3]),
+                          diameter = 0.01,
+                          color=[1,0,0,1],
+                          geom_id = ids[n_sphere])
+                n_sphere += 1
+                render_sphere(viewer=viewer,
+                          position = np.array(X[i,:3]),
+                          diameter = 0.01,
+                          color=[0,1,0,1],
+                          geom_id = ids[n_sphere])
+                n_sphere += 1
+                render_sphere(viewer=viewer,
+                          position = np.array(reference_1[i,:3]),
+                          diameter = 0.01,
+                          color=[1,0,0,1],
+                          geom_id = ids[n_sphere])
+                n_sphere += 1
+            viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_TRANSPARENT] = True
+            # viewer.user_scn.ngeom = N*n_contact + N
             # # move the prediction one step forward
             U0 = jnp.concatenate([U[1:],U[-1:]])
             X0 = jnp.concatenate([X[1:],X[-1:]])
             V0 = jnp.concatenate([V[1:],V[-1:]])
             tau = U[0,:]
+            sim_data_record.append(np.concatenate([sim_data.qpos.copy(),sim_data.qvel.copy()]))
         sim_data.ctrl = tau
         mujoco.mj_step(sim_model, sim_data)
         viewer.sync()
         counter += 1
 
+with open('colaborative_robots.pkl', 'wb') as f:
+    pickle.dump(sim_data_record, f)
