@@ -138,7 +138,7 @@ while env.viewer.is_running():
 
         foot_op_vec = foot_op.flatten()
         x0 = jnp.concatenate([qpos, qvel,foot_op_vec,jnp.zeros(3*config.n_contact)])
-        input = (ref_base_lin_vel, ref_base_ang_vel, 0.33)
+        input = (ref_base_lin_vel, ref_base_ang_vel, config.robot_height)
         
         reference , parameter , liftoff = jitted_reference_generator(config.p_legs0,timer_t, jnp.concatenate([qpos,qvel]), foot_op_vec, input, duty_factor = config.duty_factor,  step_freq= config.step_freq ,step_height=config.step_height,liftoff=liftoff)
         
