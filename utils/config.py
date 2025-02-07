@@ -15,23 +15,36 @@ body_name = ['FL_calf', 'FR_calf', 'RL_calf', 'RR_calf']
 
 # Time and stage parameters
 dt = 0.02      # Time step in seconds
-N = 30         # Number of stages
+N = 30        # Number of stages
 
 # Timer values (make sure the values match your intended configuration)
 timer_t = jnp.array([0.5, 0.0, 0.0, 0.5])  # Timer values for each leg
-duty_factor = 0.6  # Duty factor for the gait
+duty_factor = 0.65  # Duty factor for the gait
 step_freq = 1.35   # Step frequency in Hz
-step_height = 0.08  # Step height in meters
+step_height = 0.065  # Step height in meters
+robot_height = 0.27  # Height of the robot's base in meters
 
 # Initial positions, orientations, and joint angles
 p0 = jnp.array([0, 0, 0.33])  # Initial position of the robot's base
 quat0 = jnp.array([1, 0, 0, 0])  # Initial orientation of the robot's base (quaternion)
-q0 = jnp.array([0, 0.8, -1.8, 0, 0.8, -1.8, 0, 0.8, -1.8, 0, 0.8, -1.8])  # Initial joint angles
+#alingo
+# q0 = jnp.array([0, 0.8, -1.8, 0, 0.8, -1.8, 0, 0.8, -1.8, 0, 0.8, -1.8])  # Initial joint angles
+#go2
+q0 = jnp.array([0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8])  # Initial joint angles
+
+#alingo
+# p_legs0 = jnp.array([
+#     0.2717, 0.137, 0.024,  # Initial position of the front left leg
+#     0.2717, -0.137, 0.024, # Initial position of the front right leg
+#    -0.209,  0.137, 0.024,  # Initial position of the rear left leg
+#    -0.209, -0.137, 0.024   # Initial position of the rear right leg
+# ])
+#go2
 p_legs0 = jnp.array([
-    0.2717, 0.137, 0.024,  # Initial position of the front left leg
-    0.2717, -0.137, 0.024, # Initial position of the front right leg
-   -0.209,  0.137, 0.024,  # Initial position of the rear left leg
-   -0.209, -0.137, 0.024   # Initial position of the rear right leg
+    0.192, 0.142, 0.024,  # Initial position of the front left leg
+    0.192, -0.142, 0.024, # Initial position of the front right leg
+   -0.195, 0.142, 0.024,  # Initial position of the rear left leg
+   -0.195, -0.142, 0.024  # Initial position of the rear right leg
 ])
 
 # Determine number of joints and contacts from the lists
