@@ -87,7 +87,7 @@ from timeit import default_timer as timer
 # Define cost and dynamics functions
 grf_scaling = 220
 cost = partial(mpc_objectives.quadruped_wb_obj, config.W, config.n_joints, config.n_contact, config.N, grf_scaling)
-dynamics = partial(mpc_dyn_model.quadruped_wb_dynamics,model,mjx_model,contact_id, body_id,config.n_joints,config.dt)
+dynamics = partial(mpc_dyn_model.quadruped_wb_dynamics_contact_implicit,model,mjx_model,contact_id, body_id,config.n_joints,config.dt)
 
 # Define JAX jitted functions for MPC and reference generation
 @jax.jit
