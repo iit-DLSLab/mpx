@@ -25,7 +25,7 @@ from functools import partial
 from jax import grad, jvp
 
 # Problem dimensions
-N = 20  # Number of stages
+N = 100  # Number of stages
 n = 4    # Number of states (theta1, theta1_dot, theta2, theta2_dot)
 m = 3    # Number of controls (F)
 
@@ -98,7 +98,7 @@ u_ref = jnp.array([0.0,0.0,0.0])
 
 # Define the cost function
 Q = jnp.diag(jnp.array([1e-5/dt, 1e-5/dt, 1e-5/dt, 1e-5/dt]))
-R = jnp.diag(jnp.array([ 1e-4/dt]))
+R =  jnp.diag(jnp.array([1e-2/dt, 1e-2/dt, 1e-4/dt]))
 Q_f = jnp.diag(jnp.array([10.0, 10.0, 100.0, 100.0]))
 
 @jax.jit
@@ -138,7 +138,35 @@ def work(x0,X0,U0,V0):
 
 import numpy as np
 from IPython.display import display, clear_output
-jittedDynamics = jax.jit(dynamics)
+def fwd_dynamics(x, u,t,parameter):
+    del t
+    theta1_dot = x[0]
+    theta2_dot = x[1]
+    theta1 = x[2]
+    theta2 = x[3]
+
+    d11 = I1 + I2 + m2 * l1*l1 + 2 * m2 * l1 * lc2 * jnp.cos(theta2)
+    d12 = I2 + m2 * l1 * lc2 * jnp.cos(theta2)
+    d21 = d12
+    d22 = I2
+
+    c11 = -2 * m2 * l1 * lc2 * jnp.sin(theta2) * theta2_dot
+    c12 = -m2 * l1 * lc2 * jnp.sin(theta2) * theta2_dot
+    c21 = m2 * l1 * lc2 * jnp.sin(theta2) * theta1_dot
+    c22 = 0
+
+    g1 = m1*g*lc1*jnp.sin(theta1)+m2*g*(l1*jnp.sin(theta1)+lc2*jnp.sin(theta1+theta2))
+    g2 = m2 * lc2 * g * jnp.sin(theta1 + theta2)
+
+    D = jnp.array([[d11, d12], [d21, d22]])
+    C = jnp.array([[c11, c12], [c21, c22]])
+    G = jnp.array([g1, g2])
+
+    theta_dot_new = jnp.array([theta1_dot,theta2_dot]) + dt * jnp.linalg.inv(D)@(jnp.array([0,u[0]]) - C@(jnp.array([theta1_dot,theta2_dot])) - G)
+    theta_new = jnp.array([theta1,theta2]) + dt * theta_dot_new
+
+    return jnp.concatenate([theta_dot_new,theta_new])
+jittedDynamics = jax.jit(fwd_dynamics)
 import matplotlib.pyplot as plt
 
 plt.ion()
@@ -156,7 +184,7 @@ def update_plot(x1, y1, x2, y2):
     plt.pause(dt)
 u_history = []
 while True:
-    x0 = jittedDynamics(x0,U0[0],0,parameter)
+    x0 = jittedDynamics(x0,U0[0,2:],0,parameter)
     X0,U0,V0 = work(x0,X0,U0,V0)
     u_history.append(U0[0])
     x1 = l1 * jnp.sin(x0[2])
