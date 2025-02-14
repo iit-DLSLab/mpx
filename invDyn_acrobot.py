@@ -50,10 +50,10 @@ def dynamics(x, u,t,parameter):
     theta1 = x[2]
     theta2 = x[3]
 
-    theta1_dot1 = u[0]
-    theta2_dot1 = u[1]
+    theta1_acc = u[0]
+    theta2_acc = u[1]
     
-    theta_dot_new = jnp.array([theta1_dot1,theta2_dot1])
+    theta_dot_new = jnp.array([theta1_dot,theta2_dot]) + dt * jnp.array([theta1_acc,theta2_acc])
     theta_new = jnp.array([theta1,theta2]) + dt * theta_dot_new
 
     return jnp.concatenate([theta_dot_new,theta_new])
@@ -65,8 +65,8 @@ def equality_constraints(x, u, t,parameter):
     theta2_dot = x[1]
     theta1 = x[2]
     theta2 = x[3]
-    theta1_dot1 = u[0]
-    theta2_dot1 = u[1]
+    theta1_acc = u[0]
+    theta2_acc = u[1]
     tau = u[2]
 
     d11 = I1 + I2 + m2 * l1*l1 + 2 * m2 * l1 * lc2 * jnp.cos(theta2)
@@ -85,7 +85,7 @@ def equality_constraints(x, u, t,parameter):
     D = jnp.array([[d11, d12], [d21, d22]])
     C = jnp.array([[c11, c12], [c21, c22]])
     G = jnp.array([g1, g2])
-    acc = jnp.array([theta1_dot1-theta1_dot,theta2_dot1-theta2_dot])/dt
+    acc = jnp.array([theta1_acc,theta2_acc])
 
     return D @ acc + C @ jnp.array([theta1_dot,theta2_dot]) + G - jnp.array([0,tau])
 
@@ -98,7 +98,7 @@ u_ref = jnp.array([0.0,0.0,0.0])
 
 # Define the cost function
 Q = jnp.diag(jnp.array([1e-5/dt, 1e-5/dt, 1e-5/dt, 1e-5/dt]))
-R =  jnp.diag(jnp.array([1e-2/dt, 1e-2/dt, 1e-4/dt]))
+R =  jnp.diag(jnp.array([1e-4/dt, 1e-4/dt, 1e-4/dt]))
 Q_f = jnp.diag(jnp.array([10.0, 10.0, 100.0, 100.0]))
 
 @jax.jit
@@ -118,11 +118,12 @@ x0 = pos_0
 U0 = jnp.tile(u_ref, (N, 1))
 X0 = jnp.tile(x0, (N + 1, 1))
 V0 = jnp.zeros((N+ 1, n))
+Veq0 = jnp.zeros((N+1, 2))
 from timeit import default_timer as timer
 
 
 @jax.jit
-def work(x0,X0,U0,V0):
+def work(x0,X0,U0,V0,Veq0,rho,tol):
     return optimizers.eq_con_mpc(
         cost,
         dynamics,
@@ -134,6 +135,9 @@ def work(x0,X0,U0,V0):
         X0,
         U0,
         V0,
+        Veq0,
+        rho,
+        tol
     )
 
 import numpy as np
@@ -172,26 +176,57 @@ import matplotlib.pyplot as plt
 plt.ion()
 fig, (ax, ax_u) = plt.subplots(2, 1)
 line, = ax.plot([], [], 'o-', lw=2)
+line.set_color('b')
+line1, = ax.plot([], [], 'o-', lw=2)
+line1.set_color('r')
+line1.set_alpha(0.5)
+line2, = ax.plot([], [], 'o-', lw=2)
+line2.set_color('r')
 ax.set_xlim(-l1 - l2 - 0.5, l1 + l2 + 0.5)
 ax.set_ylim(-l1 - l2 - 0.5, l1 + l2 + 0.5)
 ax.set_aspect('equal')
 plt.grid()
 
-def update_plot(x1, y1, x2, y2):
+def update_plot1(x1, y1, x2, y2, x1f, y1f, x2f, y2f, x1hf, y1hf, x2hf, y2hf):
     line.set_data([0, x1, x2], [0, y1, y2])
+    line1.set_data([0, x1hf, x2hf], [0, y1hf, y2hf])
+    line2.set_data([0, x1f, x2f], [0, y1f, y2f])
+    display(fig)
+    clear_output(wait=True)
+    plt.pause(dt)
+def update_plot(x1, y1, x2, y2, x1f, y1f, x2f, y2f):
+    line.set_data([0, x1, x2], [0, y1, y2])
+    line2.set_data([0, x1f, x2f], [0, y1f, y2f])
     display(fig)
     clear_output(wait=True)
     plt.pause(dt)
 u_history = []
+counter = 0
+rho = 10
+tol = np.pow(rho,-0.1)
 while True:
     x0 = jittedDynamics(x0,U0[0,2:],0,parameter)
-    X0,U0,V0 = work(x0,X0,U0,V0)
-    u_history.append(U0[0])
+    X0,U0,V0,Veq0,rho,tol = work(x0,X0,U0,V0,Veq0,rho,tol)
+    u_history.append(U0[0,2])
     x1 = l1 * jnp.sin(x0[2])
     y1 = -l1 * jnp.cos(x0[2])
     x2 = x1 + l2 * jnp.sin(x0[3])
     y2 = y1 - l2 * jnp.cos(x0[3])
-    update_plot(x1, y1, x2, y2)
+
+    x1f = l1*jnp.sin(X0[-1,2])
+    y1f = -l1*jnp.cos(X0[-1,2])
+    x2f = x1f + l2*jnp.sin(X0[-1,3])
+    y2f = y1f - l2*jnp.cos(X0[-1,3])
+    if counter == N/2 or counter == 0:
+        x1hf = l1*jnp.sin(X0[int(N/2),2])
+        y1hf = -l1*jnp.cos(X0[int(N/2),2])
+        x2hf = x1hf + l2*jnp.sin(X0[int(N/2),3])
+        y2hf = y1hf - l2*jnp.cos(X0[int(N/2),3])
+        update_plot1(x1, y1, x2, y2, x1f, y1f, x2f, y2f, x1hf, y1hf, x2hf, y2hf)
+        counter = 0
+    update_plot(x1, y1, x2, y2, x1f, y1f, x2f, y2f)
+    counter += 1
+    
     ax_u.clear()
     ax_u.plot(u_history)
     ax_u.set_title('Control Input Over Time')
