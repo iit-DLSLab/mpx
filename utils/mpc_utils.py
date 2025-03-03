@@ -13,7 +13,7 @@ def timer_run(duty_factor,step_freq, leg_time, dt):
     return contact, leg_time
 
 @partial(jax.jit, static_argnums=(0,1,2,3))
-def reference_generator(N,dt,n_joints,n_contact,foot0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
+def reference_generator(N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
     p = x[:3]
     quat = x[3:7]
     # q = x[7:7+n_joints]
@@ -27,7 +27,7 @@ def reference_generator(N,dt,n_joints,n_contact,foot0,t_timer, x, foot, input, d
     p_ref_z = jnp.ones(N+1) * robot_height
     p_ref = jnp.stack([p_ref_x, p_ref_y, p_ref_z], axis=1)
     quat_ref = jnp.tile(jnp.array([1, 0, 0, 0]), (N+1, 1))
-    q_ref = jnp.tile(jnp.array([0, 0.8, -1.8, 0, 0.8, -1.8, 0, 0.8, -1.8, 0, 0.8, -1.8]), (N+1, 1))
+    q_ref = jnp.tile(q0, (N+1, 1))
     dp_ref = jnp.tile(ref_lin_vel, (N+1, 1))
     omega_ref = jnp.tile(ref_ang_vel, (N+1, 1))
     contact_sequence = jnp.zeros(((N+1), n_contact))
@@ -35,9 +35,10 @@ def reference_generator(N,dt,n_joints,n_contact,foot0,t_timer, x, foot, input, d
     Ryaw = jnp.array([[jnp.cos(yaw), -jnp.sin(yaw), 0],[jnp.sin(yaw), jnp.cos(yaw), 0],[0, 0, 1]])
     foot_ref = jnp.tile(foot, (N+1, 1))
     foot = jnp.tile(p,n_contact) + foot0@jax.scipy.linalg.block_diag(Ryaw,Ryaw,Ryaw,Ryaw).T
+    grf_ref = jnp.zeros((N+1, 3*n_contact))
     def foot_fn(t,carry):
 
-        new_t, contact_sequence,new_foot,liftoff_x,liftoff_y,liftoff_z = carry
+        new_t, contact_sequence,new_foot,liftoff_x,liftoff_y,liftoff_z,grf_new = carry
 
         new_foot_x = new_foot[t-1,::3]
         new_foot_y = new_foot[t-1,1::3]
@@ -54,7 +55,7 @@ def reference_generator(N,dt,n_joints,n_contact,foot0,t_timer, x, foot, input, d
         def calc_foothold(direction):
             f1 = 0.5*ref_lin_vel[direction]*duty_factor/step_freq
             f2 = jnp.sqrt(robot_height/9.81)*(dp[direction]-ref_lin_vel[direction])
-            f = f1 + f2 + foot[direction::3]
+            f = f1 + foot[direction::3]
             return f
         
         foothold_x = calc_foothold(0)
@@ -81,17 +82,19 @@ def reference_generator(N,dt,n_joints,n_contact,foot0,t_timer, x, foot, input, d
         new_foot = new_foot.at[t,1::3].set(new_foot_y)
         new_foot = new_foot.at[t,2::3].set(new_foot_z)
 
-        return (new_t, contact_sequence,new_foot,liftoff_x,liftoff_y,liftoff_z)
+        grf_new = grf_new.at[t,2::3].set(new_contact_sequence*500/jnp.sum(new_contact_sequence))
+
+        return (new_t, contact_sequence,new_foot,liftoff_x,liftoff_y,liftoff_z,grf_new)
     
     liftoff_x = liftoff[::3]
     liftoff_y = liftoff[1::3]
     liftoff_z = liftoff[2::3]
 
-    init_carry = (t_timer, contact_sequence,foot_ref,liftoff_x,liftoff_y,liftoff_z)
-    _, contact_sequence,foot_ref, liftoff_x,liftoff_y,liftoff_z = jax.lax.fori_loop(0,N+1,foot_fn, init_carry)
+    init_carry = (t_timer, contact_sequence,foot_ref,liftoff_x,liftoff_y,liftoff_z,grf_ref)
+    _, contact_sequence,foot_ref, liftoff_x,liftoff_y,liftoff_z,grf_ref = jax.lax.fori_loop(0,N+1,foot_fn, init_carry)
 
     liftoff = liftoff.at[::3].set(liftoff_x)
     liftoff = liftoff.at[1::3].set(liftoff_y)
     liftoff = liftoff.at[2::3].set(liftoff_z)
 
-    return jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref, foot_ref], axis=1), contact_sequence, liftoff
+    return jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref, foot_ref,grf_ref], axis=1),jnp.concatenate([ contact_sequence,foot_ref], axis=1), liftoff
