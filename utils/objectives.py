@@ -20,7 +20,7 @@ def quadruped_wb_obj(W,n_joints,n_contact,N,grf_scaling,x, u, t, reference):
     q_ref = reference[t,7:7+n_joints]
     dp_ref = reference[t,7+n_joints:10+n_joints]
     omega_ref = reference[t,10+n_joints:13+n_joints]
-    p_leg_ref = reference[t,13+n_joints:]
+    p_leg_ref = reference[t,13+n_joints:13+n_joints+3*n_contact]
 
     mu = 0.7
     friction_cone = jnp.array([[0,0,1],[-1,0,mu],[1,0,mu],[0,-1,mu],[0,1,mu]])
