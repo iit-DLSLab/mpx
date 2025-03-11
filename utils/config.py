@@ -14,8 +14,8 @@ contact_frame = ['FL', 'FR', 'RL', 'RR']
 body_name = ['FL_calf', 'FR_calf', 'RL_calf', 'RR_calf']
 
 # Time and stage parameters
-dt = 0.02      # Time step in seconds
-N = 30        # Number of stages
+dt = 0.01  # Time step in seconds
+N = 50        # Number of stages
 
 # Timer values (make sure the values match your intended configuration)
 timer_t = jnp.array([0.5, 0.0, 0.0, 0.5])  # Timer values for each leg
@@ -25,7 +25,7 @@ step_height = 0.065  # Step height in meters
 robot_height = 0.27  # Height of the robot's base in meters
 
 # Initial positions, orientations, and joint angles
-p0 = jnp.array([0, 0, 0.33])  # Initial position of the robot's base
+p0 = jnp.array([0, 0, 0.27])  # Initial position of the robot's base
 quat0 = jnp.array([1, 0, 0, 0])  # Initial orientation of the robot's base (quaternion)
 #alingo
 # q0 = jnp.array([0, 0.8, -1.8, 0, 0.8, -1.8, 0, 0.8, -1.8, 0, 0.8, -1.8])  # Initial joint angles
@@ -55,6 +55,9 @@ m = n_joints  # Number of controls (F)
 
 # Reference torques and controls (using n_joints)
 tau_ref = jnp.zeros(n_joints)  # Reference torques (all zeros)
+# tau_ref = jnp.array([7.2171830e-02, -2.1473727e+00,  5.8485503e+00,  2.6923120e-03,
+#  -2.0035117e+00,  6.1621408e+00, -7.5488970e-02, -5.8711457e-01,
+#   3.2296045e+00,  1.8179446e-02, -4.2551014e-01,  3.5929255e+00])
 u_ref = jnp.concatenate([tau_ref])  # Reference controls (concatenated torques)
 
 # Cost matrices (diagonal matrices created using jnp.diag)
@@ -68,8 +71,10 @@ Qtau  = jnp.diag(jnp.ones(n_joints)) * 1e-1  # Cost matrix for torques
 
 # For the leg contact cost, repeat the unit cost for each contact point.
 # Qleg_unit represents the cost per leg contact, and we tile it for each contact.
-Qleg_unit = jnp.array([1e4, 1e4, 1e5])  # Unit cost for leg contact
-Qleg  = jnp.diag(jnp.tile(Qleg_unit, n_contact))  # Cost matrix for leg contacts
+Qleg_x = jnp.tile(jnp.array([1e4]),n_contact)  # Unit cost for leg contact
+Qleg_y = jnp.tile(jnp.array([1e4]),n_contact)  # Unit cost for leg contact
+Qleg_z = jnp.tile(jnp.array([1e5]),n_contact)  # Unit cost for leg contact
+Qleg  = jnp.diag(jnp.concatenate([Qleg_x,Qleg_y,Qleg_z]))  # Cost matrix for leg contacts
 
 # Combine all cost matrices into a block diagonal matrix
 W = jax.scipy.linalg.block_diag(Qp, Qrot, Qq, Qdp, Qomega, Qdq, Qleg, Qtau)

@@ -22,7 +22,7 @@ from functools import partial
 import mujoco
 from gym_quadruped.quadruped_env import QuadrupedEnv
 import copy
-from gym_quadruped.utils.mujoco.visual import render_sphere
+from gym_quadruped.utils.mujoco.visual import render_sphere, render_vector
 
 import utils.mpc_utils as mpc_utils
 import utils.models as mpc_dyn_model
@@ -87,7 +87,8 @@ from timeit import default_timer as timer
 # Define cost and dynamics functions
 grf_scaling = 220
 cost = partial(mpc_objectives.quadruped_wb_obj, config.W, config.n_joints, config.n_contact, config.N, grf_scaling)
-dynamics = partial(mpc_dyn_model.quadruped_wb_dynamics_contact_implicit,model,mjx_model,contact_id, body_id,config.n_joints,config.dt)
+hessian_approx = partial(mpc_objectives.quadruped_wb_hessian_gn, config.W, config.n_joints, config.n_contact, config.N, grf_scaling)
+dynamics = partial(mpc_dyn_model.quadruped_wb_dynamics,model,mjx_model,contact_id, body_id,config.n_joints,config.dt)
 
 # Define JAX jitted functions for MPC and reference generation
 @jax.jit
@@ -95,6 +96,7 @@ def work(reference,parameter,x0,X0,U0,V0):
     return optimizers.mpc(
         cost,
         dynamics,
+        hessian_approx,
         False,
         reference,
         parameter,
@@ -105,9 +107,8 @@ def work(reference,parameter,x0,X0,U0,V0):
     )
 
 @jax.jit
-def jitted_reference_generator(foot0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
-    return mpc_utils.reference_generator(config.N,config.dt,config.n_joints,config.n_contact,foot0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff)
-
+def jitted_reference_generator(foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
+    return mpc_utils.reference_generator(config.N,config.dt,config.n_joints,config.n_contact,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff)
 # Timer initialization
 timer_t_sim = config.timer_t.copy()
 contact, timer_t = mpc_utils.timer_run(duty_factor = config.duty_factor, step_freq = config.step_freq,leg_time=config.timer_t, dt=config.dt)
@@ -116,13 +117,14 @@ liftoff = config.p_legs0.copy()
 counter = 0
 high_freq_counter = 0
 env.render()
-# ids = []
-# for i in range(N*4):
-#      ids.append(render_sphere(viewer=env.viewer,
-#               position = np.array([0,0,0]),
-#               diameter = 0.01,
-#               color=[1,0,0,1]))
-
+ids = []
+for i in range(config.N*4):
+     ids.append(render_vector(env.viewer,
+              np.zeros(3),
+              np.zeros(3),
+              0.1,
+              np.array([1, 0, 0, 1])))
+env.mjData.qpos = x0[:config.n_joints+7]
 # Main simulation loop
 while env.viewer.is_running():
 
@@ -140,8 +142,9 @@ while env.viewer.is_running():
         x0 = jnp.concatenate([qpos, qvel,foot_op_vec,jnp.zeros(3*config.n_contact)])
         input = (ref_base_lin_vel, ref_base_ang_vel, config.robot_height)
         
-        reference , parameter , liftoff = jitted_reference_generator(config.p_legs0,timer_t, jnp.concatenate([qpos,qvel]), foot_op_vec, input, duty_factor = config.duty_factor,  step_freq= config.step_freq ,step_height=config.step_height,liftoff=liftoff)
+        reference , parameter , liftoff = jitted_reference_generator(config.p_legs0,config.q0,timer_t, jnp.concatenate([qpos,qvel]), foot_op_vec, input, duty_factor = config.duty_factor,  step_freq= config.step_freq ,step_height=config.step_height,liftoff=liftoff)
         
+        X0 = X0.at[0].set(x0)
         start = timer()
         X,U,V =  work(reference,parameter,x0,X0,U0,V0)
         X.block_until_ready()
@@ -157,7 +160,14 @@ while env.viewer.is_running():
         #                   diameter = 0.01,
         #                   color=[parameter[i,leg],1,0,1],
         #                   geom_id = ids[leg*N+i])
-       
+        grf = X[1,13+2*config.n_joints+3*config.n_contact:]
+        for c in range(config.n_contact):
+                render_vector(env.viewer,
+                      grf[3*c:3*(c+1)],
+                      foot_op_vec[3*c:3*(c+1)],
+                      np.linalg.norm(grf[3*c:3*(c+1)])/500,
+                      np.array([1, 0, 0, 1]),
+                      ids[c])
         tau_val = U[:4,:config.n_joints]
         high_freq_counter = 0
         if jnp.any(jnp.isnan(tau_val)):
@@ -170,12 +180,18 @@ while env.viewer.is_running():
             U0 = jnp.concatenate([U[shift:],jnp.tile(U[-1:],(shift,1))])
             X0 = jnp.concatenate([X[shift:],jnp.tile(X[-1:],(shift,1))])
             V0 = jnp.concatenate([V[shift:],jnp.tile(V[-1:],(shift,1))])
+        
     if counter % (sim_frequency * config.dt) == 0 or counter == 0:
             tau = tau_val[high_freq_counter,:]
             high_freq_counter += 1
+    # tau = 30*(config.q0 - qpos[7:7+config.n_joints]) - 5*qvel[6:6+config.n_joints]
+    # x0 = jitted_dyn(x0,tau,0,parameter)
+    # env.mjData.qpos = x0[:config.n_joints+7]
+    # env.mjData.qvel = x0[config.n_joints+7:2*config.n_joints+13]
+    # tau = jnp.zeros(config.n_joints)
     state, reward, is_terminated, is_truncated, info = env.step(action=tau)
     counter += 1
-    if is_terminated:
+    if False:
         env.reset(random=False)
         timer_t = jnp.array([0000.5,0000.0,0000,0000.5])
         liftoff = config.p_legs0.copy()
