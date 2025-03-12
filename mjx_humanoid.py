@@ -85,21 +85,21 @@ p0 = jnp.array([0, 0, 0.91,
     0,
     0, 0, 0, 0,
     0, 0, 0, 0])
-x0 = jnp.concatenate([p0, jnp.zeros(6 + n_joints),p_legs0,jnp.array([0,0,50,0,0,250,0,0,50,0,0,250])])
+x0 = jnp.concatenate([p0, jnp.zeros(6 + n_joints),p_legs0,jnp.array([0,0,125,0,0,125,0,0,125,0,0,125])])
 vel0 = jnp.zeros(6 + n_joints)  
 u0 = jnp.zeros(m)
 Qp = jnp.diag(jnp.array([0, 0, 1e4]))
-Qq = jnp.diag(jnp.array([ 4e0, 4e0, 4e0, 4e0, 4e0,
-                          4e0, 4e0, 4e0, 4e0, 4e0,
+Qq = jnp.diag(jnp.array([ 4e-1, 4e-1, 4e-1, 4e-1, 4e-1,
+                          4e-1, 4e-1, 4e-1, 4e-1, 4e-1,
                           4e1, 
                           4e2, 4e2, 4e2, 4e2,
                           4e2, 4e2, 4e2, 4e2])) 
 Qdp = jnp.diag(jnp.array([1, 1, 1]))*1e3
 Qomega = jnp.diag(jnp.array([1, 1, 1]))*1e2
-Qdq = jnp.diag(jnp.ones(n_joints)) * 1e-1
+Qdq = jnp.diag(jnp.ones(n_joints)) * 1e0
 Qrot = jnp.diag(jnp.array([1,1,1]))*1e3
 Qtau = jnp.diag(jnp.ones(n_joints)) * 1e-2
-Qleg = jnp.diag(jnp.tile(jnp.array([1e4,1e4,1e4]),n_contact))
+Qleg = jnp.diag(jnp.tile(jnp.array([1e3,1e3,1e5]),n_contact))
 Qgrf = jnp.diag(jnp.ones(3*n_contact))*1e-2
 tau0 = jnp.array([
     -3.8866019e-01,  8.2269782e-01, -6.9408727e+00, -5.7233673e+01,
@@ -111,8 +111,8 @@ tau0 = jnp.array([
 # grf0 = jnp.array([0,0,198,0,0,50,0,0,198,0,0,50])
 # # Define the cost function
 W = jax.scipy.linalg.block_diag(Qp, Qrot, Qq, Qdp, Qomega, Qdq, Qleg, Qtau,Qgrf)
-cost = partial(mpc_objectives.humanoid_wb_obj, W, n_joints, n_contact, N, 500)
-hessian_approx = partial(mpc_objectives.humanoid_wb_hessian_gn, W, n_joints, n_contact, N, 500)
+cost = partial(mpc_objectives.humanoid_wb_obj, W, n_joints, n_contact, N)
+hessian_approx = partial(mpc_objectives.humanoid_wb_hessian_gn, W, n_joints, n_contact)
 dynamics = partial(mpc_dyn_model.humanoid_wb_dynamics,model,mjx_model,contact_id, body_id,n_joints,dt)
 # # Solve
 p_ref = jnp.array([0, 0, 0.9])
@@ -193,12 +193,14 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             foot_op = np.array([data.geom_xpos[contact_id[i]] for i in range(n_contact)])
             contact_op , timer_t_sim = mpc_utils.timer_run(duty_factor = duty_factor, step_freq = step_freq ,leg_time=timer_t_sim, dt=1/mpc_frequency)
             timer_t = timer_t_sim.copy()
-            ref_base_lin_vel = jnp.array([0.2,0,0])
+            ref_base_lin_vel = jnp.array([0.5,0,0])
             ref_base_ang_vel = jnp.array([0,0,0])
         
             foot_op_vec = foot_op.flatten()
             x0 = jnp.concatenate([qpos, qvel,foot_op_vec,np.zeros(3*n_contact)])
-            input = (ref_base_lin_vel, ref_base_ang_vel, 0.9)
+            input = jnp.array([ref_base_lin_vel[0],ref_base_lin_vel[1],ref_base_lin_vel[2],
+                           ref_base_ang_vel[0],ref_base_ang_vel[1],ref_base_ang_vel[2],
+                           0.9])
             start = timer()
             reference , parameter , liftoff = jitted_reference_generator(p_legs0,p0[7:7+n_joints],timer_t, jnp.concatenate([qpos,qvel]), foot_op_vec, input, duty_factor = duty_factor,  step_freq= step_freq ,step_height=step_height,liftoff=liftoff)
             X,U,V =  work(reference,parameter,x0,X0,U0,V0)
@@ -213,7 +215,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 print('Nan detected')
                 U0 = jnp.tile(u_ref, (N, 1))
                 V0 = jnp.zeros((N + 1,n ))
-                x0 = jnp.concatenate([p0, jnp.zeros(6 + n_joints),p_legs0,jnp.zeros(3*n_contact)])
+                x0 = jnp.concatenate([p0, jnp.zeros(6 + n_joints),p_legs0,jnp.array([0,0,125,0,0,125,0,0,125,0,0,125])])
                 X0 = jnp.tile(x0, (N + 1, 1))
             else:
                 shift = int(1/(dt*mpc_frequency))
@@ -222,7 +224,6 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 V0 = jnp.concatenate([V[shift:],jnp.tile(V[-1:],(shift,1))])
             
             for c in range(n_contact):
-                print(np.linalg.norm(grf[3*c:3*(c+1)]))
                 render_vector(viewer,
                       grf[3*c:3*(c+1)],
                       data.geom_xpos[contact_id[c]],

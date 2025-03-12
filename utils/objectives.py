@@ -10,7 +10,7 @@ def penaly(constraint):
         quadratic_barrier = alpha/2*(jnp.square((constraint-2*sigma)/sigma)-jnp.ones_like(constraint))
         log_barrier = -alpha*safe_log(constraint)
         return jnp.clip(jnp.where(constraint>sigma,log_barrier,quadratic_barrier+log_barrier),0,1e6)
-def quadruped_wb_obj(W,n_joints,n_contact,N,grf_scaling,x, u, t, reference):
+def quadruped_wb_obj(W,n_joints,n_contact,N,x, u, t, reference):
 
     p = x[:3]
     quat = x[3:7]
@@ -61,7 +61,7 @@ def quadruped_wb_obj(W,n_joints,n_contact,N,grf_scaling,x, u, t, reference):
 
     return jnp.where(t == N, 0.5 * term_cost, 0.5 * stage_cost)
 
-def quadruped_wb_hessian_gn(W,n_joints,n_contact,N,grf_scaling,x, u, t, reference):
+def quadruped_wb_hessian_gn(W,n_joints,n_contact,x, u, t, reference):
 
     
     def residual(x,u):
@@ -123,7 +123,7 @@ def quadruped_wb_hessian_gn(W,n_joints,n_contact,N,grf_scaling,x, u, t, referenc
 
     return J_x(x,u).T@W@J_x(x,u) + H_constraint, J_u(x,u).T@W@J_u(x,u), J_x(x,u).T@W@J_u(x,u)
 
-def humanoid_wb_obj(W,n_joints,n_contact,N,grf_scaling,x, u, t, reference):
+def humanoid_wb_obj(W,n_joints,n_contact,N,x, u, t, reference):
 
     p = x[:3]
     quat = x[3:7]
@@ -171,7 +171,7 @@ def humanoid_wb_obj(W,n_joints,n_contact,N,grf_scaling,x, u, t, reference):
 
     return jnp.where(t == N, 0.5 * term_cost, 0.5 * stage_cost)
 
-def humanoid_wb_hessian_gn(W,n_joints,n_contact,N,grf_scaling,x, u, t, reference):
+def humanoid_wb_hessian_gn(W,n_joints,n_contact,x, u, t, reference):
 
     
     def residual(x,u):

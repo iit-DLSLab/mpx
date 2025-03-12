@@ -86,8 +86,8 @@ from timeit import default_timer as timer
 
 # Define cost and dynamics functions
 grf_scaling = 220
-cost = partial(mpc_objectives.quadruped_wb_obj, config.W, config.n_joints, config.n_contact, config.N, grf_scaling)
-hessian_approx = partial(mpc_objectives.quadruped_wb_hessian_gn, config.W, config.n_joints, config.n_contact, config.N, grf_scaling)
+cost = partial(mpc_objectives.quadruped_wb_obj, config.W, config.n_joints, config.n_contact, config.N)
+hessian_approx = partial(mpc_objectives.quadruped_wb_hessian_gn, config.W, config.n_joints, config.n_contact )
 dynamics = partial(mpc_dyn_model.quadruped_wb_dynamics,model,mjx_model,contact_id, body_id,config.n_joints,config.dt)
 
 # Define JAX jitted functions for MPC and reference generation
@@ -140,7 +140,9 @@ while env.viewer.is_running():
 
         foot_op_vec = foot_op.flatten()
         x0 = jnp.concatenate([qpos, qvel,foot_op_vec,jnp.zeros(3*config.n_contact)])
-        input = (ref_base_lin_vel, ref_base_ang_vel, config.robot_height)
+        input = jnp.array([ref_base_lin_vel[0],ref_base_lin_vel[1],ref_base_lin_vel[2],
+                           ref_base_ang_vel[0],ref_base_ang_vel[1],ref_base_ang_vel[2],
+                           config.robot_height])
         
         reference , parameter , liftoff = jitted_reference_generator(config.p_legs0,config.q0,timer_t, jnp.concatenate([qpos,qvel]), foot_op_vec, input, duty_factor = config.duty_factor,  step_freq= config.step_freq ,step_height=config.step_height,liftoff=liftoff)
         

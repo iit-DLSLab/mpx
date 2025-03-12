@@ -2,7 +2,6 @@ import jax
 from jax import numpy as jnp
 from functools import partial
 
-@jax.jit
 def timer_run(duty_factor,step_freq, leg_time, dt):
     # Extract relevant fields
     # Update timer
@@ -20,7 +19,9 @@ def reference_generator(N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input
     dp = x[7+n_joints:10+n_joints]
     # omega = x[10+n_joints:13+n_joints]
     # dq = x[13+n_joints:13+2*n_joints]
-    ref_lin_vel, ref_ang_vel, robot_height = input
+    ref_lin_vel = input[:3]
+    ref_ang_vel = input[3:6]
+    robot_height = input[6]
     p = jnp.array([p[0], p[1], robot_height])
     p_ref_x = jnp.arange(N+1) * dt * ref_lin_vel[0] + p[0]
     p_ref_y = jnp.arange(N+1) * dt * ref_lin_vel[1] + p[1]
@@ -55,7 +56,7 @@ def reference_generator(N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input
         def calc_foothold(direction):
             f1 = 0.5*ref_lin_vel[direction]*duty_factor/step_freq
             f2 = jnp.sqrt(robot_height/9.81)*(dp[direction]-ref_lin_vel[direction])
-            f = f1 + foot[direction::3]
+            f = f1 + f2 + foot[direction::3]
             return f
         
         foothold_x = calc_foothold(0)
