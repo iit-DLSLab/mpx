@@ -2,6 +2,7 @@ import jax
 from jax import numpy as jnp
 from mujoco import mjx
 from mujoco.mjx._src import math
+
 def penaly(constraint):
         def safe_log(x):
             return jnp.where(x>0,jnp.log(x),1e6)
@@ -10,6 +11,68 @@ def penaly(constraint):
         quadratic_barrier = alpha/2*(jnp.square((constraint-2*sigma)/sigma)-jnp.ones_like(constraint))
         log_barrier = -alpha*safe_log(constraint)
         return jnp.clip(jnp.where(constraint>sigma,log_barrier,quadratic_barrier+log_barrier),0,1e6)
+
+def quadruped_srbd_obj(W,n_contact,N,x, u, t, reference):
+
+    p = x[:3]
+    quat = x[3:7]
+    dp = x[7:10]
+    omega = x[10:13]
+    grf = u
+
+    p_ref = reference[t,:3]
+    quat_ref = reference[t,3:7]
+    dp_ref = reference[t,7:10]
+    omega_ref = reference[t,10:13]
+
+    mu = 0.7
+    friction_cone = mu*grf[2::3] - jnp.sqrt(jnp.square(grf[1::3]) + jnp.square(grf[::3]) + jnp.ones(n_contact)*1e-2)
+    friction_cone = penaly(friction_cone)
+    stage_cost = (p - p_ref).T @ W[:3,:3] @ (p - p_ref) + math.quat_sub(quat,quat_ref).T@W[3:6,3:6]@math.quat_sub(quat,quat_ref) +\
+                 (dp - dp_ref).T @ W[6:9,6:9] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9:12,9:12] @ (omega - omega_ref) +\
+                 grf.T@W[12:12+3*n_contact,12:12+3*n_contact]@grf + jnp.sum(friction_cone)
+    term_cost = (p - p_ref).T @ W[:3,:3] @ (p - p_ref) + math.quat_sub(quat,quat_ref).T@W[3:6,3:6]@math.quat_sub(quat,quat_ref) +\
+                (dp - dp_ref).T @ W[6:9,6:9] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9:12,9:12] @ (omega - omega_ref)
+
+    return jnp.where(t == N, 0.5 * term_cost, 0.5 * stage_cost)
+
+def quadruped_srbd_hessian_gn(W,n_contact,x, u, t, reference):
+
+    def residual(x,u):
+        p = x[:3]
+        quat = x[3:7]
+        dp = x[7:10]
+        omega = x[10:13]
+        grf = u
+
+        p_ref = reference[t,:3]
+        quat_ref = reference[t,3:7]
+        dp_ref = reference[t,7:10]
+        omega_ref = reference[t,10:13]
+
+        p_res = (p - p_ref).T
+        quat_res = math.quat_sub(quat,quat_ref).T
+
+        dp_res = (dp - dp_ref).T
+        omega_res = (omega - omega_ref).T
+        
+        grf_res = grf.T
+
+        return jnp.concatenate([p_res,quat_res,dp_res,omega_res,grf_res])
+    def friction_constraint(u):
+        grf = u
+        mu = 0.7
+        friction_cone = mu*grf[2::3] - jnp.sqrt(jnp.square(grf[1::3]) + jnp.square(grf[::3]) + jnp.ones(n_contact)*1e-1)
+        return friction_cone
+    J_x = jax.jacobian(residual,0)
+    J_u = jax.jacobian(residual,1)
+    hessian_penaly = jax.grad(jax.grad(penaly))
+    J_friction_cone = jax.jacobian(friction_constraint)
+    H_penalty = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(friction_constraint(u)), -1e6, 1e6))
+    H_constraint = J_friction_cone(u).T@H_penalty@J_friction_cone(u)
+
+    return J_x(x,u).T@W@J_x(x,u), J_u(x,u).T@W@J_u(x,u) + H_constraint, J_x(x,u).T@W@J_u(x,u)
+
 def quadruped_wb_obj(W,n_joints,n_contact,N,x, u, t, reference):
 
     p = x[:3]
@@ -63,7 +126,6 @@ def quadruped_wb_obj(W,n_joints,n_contact,N,x, u, t, reference):
 
 def quadruped_wb_hessian_gn(W,n_joints,n_contact,x, u, t, reference):
 
-    
     def residual(x,u):
         p = x[:3]
         quat = x[3:7]

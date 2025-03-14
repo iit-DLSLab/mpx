@@ -3,6 +3,37 @@ from jax import numpy as jnp
 from mujoco import mjx
 from mujoco.mjx._src import math
 
+def quadruped_srbd_dynamics(mass, inertia_inv, dt, x, u, t,parameter):
+    # Extract state variables
+    p = x[:3]
+    quat = x[3:7]
+    # p_legs = x[6:6+n_joints]
+    dp = x[7:10]
+    omega = x[10:13]
+    # dp_leg = u[:n_joints]
+    grf = u
+
+    contact = parameter[t,:4]
+    p_legs = parameter[t,4:]
+
+    dp_next = dp + (jnp.array([0, 0, -9.81]) + (1 / mass) * (grf[:3]*contact[0] + grf[3:6]*contact[1] + grf[6:9]*contact[2] + grf[9:12]*contact[3])) * dt
+
+    p0 = p_legs[:3]
+    p1 = p_legs[3:6]
+    p2 = p_legs[6:9]
+    p3 = p_legs[9:]
+
+    omega_next = omega + inertia_inv@((jnp.cross(p0 - p, grf[:3])*contact[0] + jnp.cross(p1 - p, grf[3:6])*contact[1] + jnp.cross(p2 - p, grf[6:9])*contact[2] + jnp.cross(p3 - p, grf[9:12])*contact[3]))*dt
+
+    # Semi-implicit Euler integration
+    p_new = p + dp_next * dt
+    quat_new = math.quat_integrate(quat, omega_next, dt)
+    # p_legs_new = p_legs# + dp_leg * dt
+
+    x_next = jnp.concatenate([p_new, quat_new, dp_next, omega_next])
+
+    return x_next
+
 def quadruped_wb_dynamics(model, mjx_model, contact_id, body_id, n_joints, dt, x, u, t, parameter):
     """
     Compute the whole-body dynamics of a quadruped robot using forward dynamics and contact forces.
