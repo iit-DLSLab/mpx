@@ -40,7 +40,7 @@ from mujoco.mjx._src import math
 import mujoco.viewer
 import numpy as np
 import copy
-from gym_quadruped.utils.mujoco.visual import render_sphere ,render_vector
+# from gym_quadruped.utils.mujoco.visual import render_sphere ,render_vector
 import time
 import utils.mpc_utils as mpc_utils
 import utils.objectives as mpc_objectives
@@ -83,8 +83,8 @@ p0 = jnp.array([0, 0, 0.91,
     0, 0, -0.54, 1.2, -0.68,
     0, 0, -0.54, 1.2, -0.68,
     0,
-    0, 0, 0, 0,
-    0, 0, 0, 0])
+    0.5, 0.25, 0.0, 0.5,
+    0.5, -0.25, 0.0, 0.5])
 x0 = jnp.concatenate([p0, jnp.zeros(6 + n_joints),p_legs0,jnp.array([0,0,125,0,0,125,0,0,125,0,0,125])])
 vel0 = jnp.zeros(6 + n_joints)  
 u0 = jnp.zeros(m)
@@ -92,8 +92,8 @@ Qp = jnp.diag(jnp.array([0, 0, 1e4]))
 Qq = jnp.diag(jnp.array([ 4e-1, 4e-1, 4e-1, 4e-1, 4e-1,
                           4e-1, 4e-1, 4e-1, 4e-1, 4e-1,
                           4e1, 
-                          4e2, 4e2, 4e2, 4e2,
-                          4e2, 4e2, 4e2, 4e2])) 
+                          4e1, 4e1, 4e1, 4e1,
+                          4e1, 4e1, 4e1, 4e1])) 
 Qdp = jnp.diag(jnp.array([1, 1, 1]))*1e3
 Qomega = jnp.diag(jnp.array([1, 1, 1]))*1e2
 Qdq = jnp.diag(jnp.ones(n_joints)) * 1e0
@@ -163,22 +163,22 @@ ids = []
 jitted_dynamics = jax.jit(dynamics)
 data.qpos = x0[:7+n_joints]
 with mujoco.viewer.launch_passive(model, data) as viewer:
-    for c in range(n_contact):
-        ids.append(render_vector(viewer,
-              np.zeros(3),
-              np.zeros(3),
-              0.1,
-              np.array([1, 0, 0, 1])))
-    for c in range(n_contact):
-        for k in range(N):
-            ids.append(render_sphere(viewer,
-                         np.zeros(3),
-                         diameter = 0.01,
-                  color=[0,1,0,1]))
-            ids.append(render_sphere(viewer,
-                         np.zeros(3),
-                         diameter = 0.01,
-                  color=[0,1,0,1]))
+    # for c in range(n_contact):
+    #     ids.append(render_vector(viewer,
+    #           np.zeros(3),
+    #           np.zeros(3),
+    #           0.1,
+    #           np.array([1, 0, 0, 1])))
+    # for c in range(n_contact):
+    #     for k in range(N):
+    #         ids.append(render_sphere(viewer,
+    #                      np.zeros(3),
+    #                      diameter = 0.01,
+    #               color=[0,1,0,1]))
+    #         ids.append(render_sphere(viewer,
+    #                      np.zeros(3),
+    #                      diameter = 0.01,
+    #               color=[0,1,0,1]))
     # for k in range(N):
     #         ids.append(render_sphere(viewer,
     #                      np.zeros(3),
@@ -223,14 +223,14 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 X0 = jnp.concatenate([X[shift:],jnp.tile(X[-1:],(shift,1))])
                 V0 = jnp.concatenate([V[shift:],jnp.tile(V[-1:],(shift,1))])
             
-            for c in range(n_contact):
-                render_vector(viewer,
-                      grf[3*c:3*(c+1)],
-                      data.geom_xpos[contact_id[c]],
-                      np.linalg.norm(grf[3*c:3*(c+1)])/500,
-                      np.array([1, 0, 0, 1]),
-                      ids[c])
-            n_sphere = n_contact
+            # for c in range(n_contact):
+            #     render_vector(viewer,
+            #           grf[3*c:3*(c+1)],
+            #           data.geom_xpos[contact_id[c]],
+            #           np.linalg.norm(grf[3*c:3*(c+1)])/500,
+            #           np.array([1, 0, 0, 1]),
+            #           ids[c])
+            # n_sphere = n_contact
             # for c in range(n_contact):
             #     for k in range(N):
             #         render_sphere(viewer,
