@@ -8,14 +8,14 @@ sys.path.append(os.path.abspath(os.path.join(dir_path, '..')))
 import utils.mpc_utils as mpc_utils
 import utils.models as mpc_dyn_model
 import utils.objectives as mpc_objectives
-import utils.config as config
+import utils.config_srbd as config
 import mujoco 
 from mujoco import mjx
 import primal_dual_ilqr.primal_dual_ilqr.optimizers as optimizers
 import numpy as np
 from jax import dlpack as jax_dlpack
-# Try to import torch for dlpack conversion, but continue if torch is not available
 from timeit import default_timer as timer
+# Try to import torch for dlpack conversion, but continue if torch is not available
 try:
     from torch.utils import dlpack as torch_dlpack
 except ImportError:
@@ -46,7 +46,7 @@ class BatchedMPCControllerWrapper:
         self.foot0 = config.p_legs0.copy()  # Initial foot positions (could be adjusted if needed)
         self.q0 = config.q0.copy()          # Initial joint configuration
         
-        self.initial_state = jnp.concatenate([config.p0, config.quat0,config.q0, jnp.zeros(6+config.n_joints),config.p_legs0,jnp.zeros(3*config.n_contact)])
+        self.initial_state = jnp.concatenate([config.p0, config.quat0,jnp.zeros(6)])
         # Get contact and body IDs from configuration
         contact_id = []
         for name in config.contact_frame:
@@ -64,30 +64,37 @@ class BatchedMPCControllerWrapper:
         self.batch_V0 = jnp.tile(V0, (n_env, 1, 1))
         
         # Define cost, hessian approximation, and dynamics functions for MPC.
-        cost = partial(mpc_objectives.quadruped_wb_obj,
-                            config.W, config.n_joints, config.n_contact, config.N)
-        hessian_approx = partial(mpc_objectives.quadruped_wb_hessian_gn,
-                                      config.W, config.n_joints, config.n_contact)
-        dynamics = partial(mpc_dyn_model.quadruped_wb_dynamics,
-                                model, mjx_model, contact_id, body_id,
-                                config.n_joints, config.dt)
-    
-        work = partial(optimizers.mpc, cost, dynamics, hessian_approx, False)
+        cost = partial(mpc_objectives.quadruped_srbd_obj,
+                            config.W, config.n_contact, config.N)
+        hessian_approx = partial(mpc_objectives.quadruped_srbd_hessian_gn,
+                                      config.W, config.n_contact)
+        dynamics = partial(mpc_dyn_model.quadruped_srbd_dynamics,
+                                config.mass, config.inertia, jnp.linalg.inv(config.inertia), config.dt)
+
+        work = partial(optimizers.mpc, cost, dynamics, None, False)
         
-        reference_generator = partial(mpc_utils.reference_generator,
-            config.N, config.dt, config.n_joints, config.n_contact,
-            duty_factor = config.duty_factor,  step_freq= config.step_freq ,step_height=config.step_height,foot0 = config.p_legs0, q0 = config.q0)
+        reference_generator = partial(mpc_utils.reference_generator_srbd,
+            config.N, config.dt, config.n_contact ,duty_factor = config.duty_factor,  step_freq= config.step_freq ,step_height=config.step_height,foot0 = config.p_legs0)
         
+        whole_body_control = partial(mpc_utils.whole_body_interface, model, mjx_model, contact_id, body_id,config.whole_body_frequency,config.Kp,config.Kd)
+
         timer_t = partial(mpc_utils.timer_run, duty_factor=config.duty_factor, step_freq=config.step_freq)
 
         self._solve = jax.vmap(work)
         self._ref_gen = jax.vmap(reference_generator)
         self._timer_run = jax.vmap(mpc_utils.timer_run, in_axes=(None,None,0, None))
-        
+        self._whole_body_interface = jax.vmap(whole_body_control)
 
         self.contact_time = jnp.tile(config.timer_t, (n_env, 1))
         self.liftoff = jnp.zeros((n_env, 3*config.n_contact))
 
+        self.foot_ref = jnp.zeros((n_env, 3*config.n_contact))
+        self.foot_ref_dot = jnp.zeros((n_env, 3*config.n_contact))
+        self.foot_ref_ddot = jnp.zeros((n_env, 3*config.n_contact))
+
+        self.J_old = jnp.zeros((n_env, 18,3*config.n_contact))
+
+        self.grf = jnp.zeros((n_env, 3*config.n_contact))
         
     def run(self, x0, input, foot_op):
         """
@@ -103,21 +110,25 @@ class BatchedMPCControllerWrapper:
             and auxiliary variable trajectory.
         """
         # Update the timer state for the gait reference.
-        _ , self.contact_time = self._timer_run(self.config.duty_factor,self.config.step_freq,self.contact_time,1/self.mpc_frequency)
         
+        self.contact , self.contact_time = self._timer_run(self.config.duty_factor,self.config.step_freq,self.contact_time,1/self.mpc_frequency)
+       
         # Generate reference trajectory and additional MPC parameters.
-        start = timer()
-        reference, parameter, self.liftoff = self._ref_gen(
+        
+        reference, parameter, self.liftoff, foot_ref_dot,foot_ref_ddot = self._ref_gen(
             t_timer = self.contact_time.copy(),
             x = x0,
             foot = foot_op,
             input = input,
             liftoff = self.liftoff,
         )
-        stop = timer()
-        print("time ref_gen: ", stop-start)
-        start = timer()
+        
+        self.foot_ref = parameter[:,0,4:]
+        self.foot_ref_dot = foot_ref_dot[:,0,:]
+        self.foot_ref_ddot = foot_ref_ddot[:,0,:]
+        
         # Execute the MPC optimization (work function).
+       
         X, U, V = self._solve(
             reference,
             parameter,
@@ -126,66 +137,46 @@ class BatchedMPCControllerWrapper:
             self.batch_U0,
             self.batch_V0
             )
-        stop = timer()
-        print("time solve: ", stop-start)
+        
         # Warm-start for the next call: shift trajectories forward.
         self.batch_X0 = jnp.concatenate([X[:,self.shift:,:], jnp.tile(X[:,-1:,:], (self.shift, 1))],axis = 1)
         self.batch_U0 = jnp.concatenate([U[:,self.shift:,:], jnp.tile(U[:,-1:,:], (self.shift, 1))],axis = 1)
         self.batch_V0 = jnp.concatenate([V[:,self.shift:,:], jnp.tile(V[:,-1:,:], (self.shift, 1))],axis = 1)
         
-        return X, U, V
+        self.grf = U[:,0,:]
+        
+        return 0
 
     def torch_run(self, x0_torch, input_torch, foot_op_torch):
         #Runs one MPC update using the current state, input, and foot positions.
-    
         x0 = jax_dlpack.from_dlpack(x0_torch)
         input = jax_dlpack.from_dlpack(input_torch)
         foot_op = jax_dlpack.from_dlpack(foot_op_torch)
 
-        # Update the timer state for the gait reference.
-        _ , self.contact_time = self._timer_run(self.config.duty_factor,self.config.step_freq,self.contact_time,1/self.mpc_frequency)
-        
-        # Generate reference trajectory and additional MPC parameters.
-        reference, parameter, self.liftoff = self._ref_gen(
-            t_timer = self.contact_time.copy(),
-            x = x0,
-            foot = foot_op,
-            input = input,
-            liftoff = self.liftoff,
-        )
-        # Execute the MPC optimization (work function).
-        X, U, V = self._solve(
-            reference,
-            parameter,
-            x0,
-            self.batch_X0,
-            self.batch_U0,
-            self.batch_V0
-            )
-        
-        # Warm-start for the next call: shift trajectories forward.
-        self.batch_X0 = jnp.concatenate([X[:,self.shift:,:], jnp.tile(X[:,-1:,:], (self.shift, 1))],axis = 1)
-        self.batch_U0 = jnp.concatenate([U[:,self.shift:,:], jnp.tile(U[:,-1:,:], (self.shift, 1))],axis = 1)
-        self.batch_V0 = jnp.concatenate([V[:,self.shift:,:], jnp.tile(V[:,-1:,:], (self.shift, 1))],axis = 1)
+        self.run(x0, input, foot_op)
 
-        tau = torch_dlpack.from_dlpack(U[:,0,:self.config.n_joints])
-        q = torch_dlpack.from_dlpack(X[:,1,7:self.config.n_joints+7])
-        dq = torch_dlpack.from_dlpack(X[:,1,13+self.config.n_joints:2*self.config.n_joints+13])
-        return tau , q, dq
+        return 0
     
-    def reset(self,envs):
+    def whole_body_run(self,qpos,qvel):
+        return self._whole_body_interface(qpos,qvel,self.grf,self.foot_ref,self.foot_ref_dot,self.foot_ref_ddot,self.J_old,self.contact)
+    
+    def torch_whole_body_run(self,qpos,qvel):
+        qpos = jax_dlpack.from_dlpack(qpos)
+        qvel = jax_dlpack.from_dlpack(qvel)
+        tau = self.whole_body_run(qpos,qvel)
+        return torch_dlpack.from_dlpack(tau) 
+    
+    def reset(self):
         """
         Resets the MPC controller state."
         """
-        envs = jax_dlpack.from_dlpack(envs)
-        n_env_reset = envs.shape[0]
-        self.contact_time = self.contact_time.at[envs,:].set(jnp.tile(self.config.timer_t, (n_env_reset, 1)))
-        self.liftoff = self.liftoff.at[envs,:].set(jnp.zeros((n_env_reset, 3*self.config.n_contact)))
+        self.contact_time = jnp.tile(self.config.timer_t, (self.n_env, 1))
+        self.liftoff = jnp.zeros((self.n_env, 3*self.config.n_contact))
         U0 = jnp.tile(self.config.u_ref, (self.config.N, 1))
         X0 = jnp.tile(self.initial_state, (self.config.N + 1, 1))
         V0 = jnp.zeros((self.config.N + 1, self.config.n))
-        self.batch_U0 = self.batch_U0.at[envs,:,:].set(jnp.tile(U0, (n_env_reset, 1, 1)))
-        self.batch_X0 = self.batch_X0.at[envs,:,:].set(jnp.tile(X0, (n_env_reset, 1, 1)))
-        self.batch_V0 = self.batch_V0.at[envs,:,:].set(jnp.tile(V0, (n_env_reset, 1, 1)))
+        self.batch_U0 = jnp.tile(U0, (self.n_env, 1, 1))
+        self.batch_X0 = jnp.tile(X0, (self.n_env, 1, 1))
+        self.batch_V0 = jnp.tile(V0, (self.n_env, 1, 1))
         print("MPC Controller Reset")
         return

@@ -1,11 +1,11 @@
 import os
 
 # Set environment variables for XLA flags
-os.environ['XLA_FLAGS'] = (
-    '--xla_gpu_enable_triton_softmax_fusion=true '
-    '--xla_gpu_triton_gemm_any=true '
-    # '--xla_gpu_deterministic_ops=true'
-)
+# os.environ['XLA_FLAGS'] = (
+#     '--xla_gpu_enable_triton_softmax_fusion=true '
+#     '--xla_gpu_triton_gemm_any=true '
+#     # '--xla_gpu_deterministic_ops=true'
+# )
 
 import jax.numpy as jnp
 import jax
@@ -37,7 +37,7 @@ gpu_device = jax.devices('gpu')[0]
 jax.default_device(gpu_device)
 
 # Define robot and scene parameters
-robot_name = "go2"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
+robot_name = "aliengo"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
 scene_name = "flat"
 robot_feet_geom_names = dict(FR='FR',FL='FL', RR='RR' , RL='RL')
 robot_leg_joints = dict(FR=['FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint', ],
@@ -63,7 +63,7 @@ env = QuadrupedEnv(robot=robot_name,
 obs = env.reset(random=False)
 
 # Load Mujoco model and data
-model = mujoco.MjModel.from_xml_path('./data/go2/go2_mjx.xml')
+model = mujoco.MjModel.from_xml_path(config.model_path)
 data = mujoco.MjData(model)
 mjx_model = mjx.put_model(model)
 mjx_data = mjx.make_data(model)

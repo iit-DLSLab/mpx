@@ -27,7 +27,7 @@ def quadruped_srbd_obj(W,n_contact,N,x, u, t, reference):
 
     mu = 0.7
     friction_cone = mu*grf[2::3] - jnp.sqrt(jnp.square(grf[1::3]) + jnp.square(grf[::3]) + jnp.ones(n_contact)*1e-2)
-    friction_cone = penaly(friction_cone)
+    friction_cone = jnp.clip(penaly(friction_cone),1e-6,1e6)
     stage_cost = (p - p_ref).T @ W[:3,:3] @ (p - p_ref) + math.quat_sub(quat,quat_ref).T@W[3:6,3:6]@math.quat_sub(quat,quat_ref) +\
                  (dp - dp_ref).T @ W[6:9,6:9] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9:12,9:12] @ (omega - omega_ref) +\
                  grf.T@W[12:12+3*n_contact,12:12+3*n_contact]@grf + jnp.sum(friction_cone)
@@ -59,18 +59,19 @@ def quadruped_srbd_hessian_gn(W,n_contact,x, u, t, reference):
         grf_res = grf.T
 
         return jnp.concatenate([p_res,quat_res,dp_res,omega_res,grf_res])
+    
     def friction_constraint(u):
         grf = u
         mu = 0.7
-        friction_cone = mu*grf[2::3] - jnp.sqrt(jnp.square(grf[1::3]) + jnp.square(grf[::3]) + jnp.ones(n_contact)*1e-1)
+        friction_cone = mu*grf[2::3] - jnp.sqrt(jnp.square(grf[1::3]) + jnp.square(grf[::3]) + jnp.ones(n_contact)*1e-2)
         return friction_cone
     J_x = jax.jacobian(residual,0)
     J_u = jax.jacobian(residual,1)
+    contact = reference[t,13 : 13+n_contact]
     hessian_penaly = jax.grad(jax.grad(penaly))
     J_friction_cone = jax.jacobian(friction_constraint)
-    H_penalty = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(friction_constraint(u)), -1e6, 1e6))
+    H_penalty = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(friction_constraint(u)),1e-6, 1e6)*contact)
     H_constraint = J_friction_cone(u).T@H_penalty@J_friction_cone(u)
-
     return J_x(x,u).T@W@J_x(x,u), J_u(x,u).T@W@J_u(x,u) + H_constraint, J_x(x,u).T@W@J_u(x,u)
 
 def quadruped_wb_obj(W,n_joints,n_contact,N,x, u, t, reference):
@@ -157,7 +158,6 @@ def quadruped_wb_hessian_gn(W,n_joints,n_contact,x, u, t, reference):
                 # f2 = jnp.sqrt(0.27/9.81)*(dp[direction]-dp_ref[direction])
                 f = f1 + foot[direction::3]
                 return f
-        Q_leg = jnp.diag(jnp.array([1e3]*4))
         p_res = (p - p_ref).T
         quat_res = math.quat_sub(quat,quat_ref).T
         q_res = (q - q_ref).T

@@ -11,7 +11,7 @@ def timer_run(duty_factor,step_freq, leg_time, dt):
 
     return contact, leg_time
 
-# @partial(jax.jit, static_argnums=(0,1,2,3))
+@partial(jax.jit, static_argnums=(0,1,2,3))
 def reference_generator(N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
     p = x[:3]
     quat = x[3:7]
@@ -99,6 +99,7 @@ def reference_generator(N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input
     liftoff = liftoff.at[2::3].set(liftoff_z)
     return jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref, foot_ref, contact_sequence,grf_ref], axis=1),jnp.concatenate([ contact_sequence,foot_ref], axis=1), liftoff
 
+@partial(jax.jit, static_argnums=(0,1,2))
 def reference_generator_srbd(N,dt,n_contact,foot0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
     p = x[:3]
     quat = x[3:7]
@@ -119,6 +120,7 @@ def reference_generator_srbd(N,dt,n_contact,foot0,t_timer, x, foot, input, duty_
     omega_ref = jnp.tile(ref_ang_vel, (N+1, 1))
     contact_sequence = jnp.zeros(((N+1), n_contact))
     yaw = jnp.arctan2(2*(quat[0]*quat[3] + quat[1]*quat[2]), 1 - 2*(quat[2]*quat[2] + quat[3]*quat[3]))
+    rpy_ref = jnp.tile(jnp.array([0, 0, yaw]), (N+1, 1))
     Ryaw = jnp.array([[jnp.cos(yaw), -jnp.sin(yaw), 0],[jnp.sin(yaw), jnp.cos(yaw), 0],[0, 0, 1]])
     foot_ref = jnp.tile(foot, (N+1, 1))
     foot = jnp.tile(p,n_contact) + foot0@jax.scipy.linalg.block_diag(Ryaw,Ryaw,Ryaw,Ryaw).T
@@ -222,4 +224,51 @@ def reference_generator_srbd(N,dt,n_contact,foot0,t_timer, x, foot, input, duty_
     liftoff = liftoff.at[1::3].set(liftoff_y)
     liftoff = liftoff.at[2::3].set(liftoff_z)
 
-    return jnp.concatenate([p_ref, quat_ref, dp_ref, omega_ref, foot_ref], axis=1),jnp.concatenate([ contact_sequence,foot_ref], axis=1), liftoff , foot_ref_dot,foot_ref_ddot
+    return jnp.concatenate([p_ref, quat_ref, dp_ref, omega_ref,contact_sequence], axis=1),jnp.concatenate([ contact_sequence,foot_ref], axis=1), liftoff , foot_ref_dot,foot_ref_ddot
+
+import mujoco
+from mujoco import mjx
+
+@partial(jax.jit, static_argnums=(0))
+def whole_body_interface(model, mjx_model, contact_id, body_id,sim_frequency,Kp,Kd,qpos,qvel,grf,foot_ref,foot_ref_dot,foot_ref_ddot,J_old,contact):
+
+    mjx_data = mjx.make_data(model)
+    # Update the position and velocity in the data object
+    mjx_data = mjx_data.replace(qpos=qpos, qvel=qvel)
+    # Perform forward kinematics and dynamics computations
+    mjx_data = mjx.fwd_position(mjx_model, mjx_data)
+    mjx_data = mjx.fwd_velocity(mjx_model, mjx_data)
+
+    # Extract the mass matrix and bias forces
+    M = mjx_data.qM
+    D = mjx_data.qfrc_bias
+
+    # Get the positions of the contact points on the legs
+    FL_leg = mjx_data.geom_xpos[contact_id[0]]
+    FR_leg = mjx_data.geom_xpos[contact_id[1]]
+    RL_leg = mjx_data.geom_xpos[contact_id[2]]
+    RR_leg = mjx_data.geom_xpos[contact_id[3]]
+
+    # Compute the Jacobians for each leg
+    J_FL, _ = mjx.jac(mjx_model, mjx_data, FL_leg, body_id[0])
+    J_FR, _ = mjx.jac(mjx_model, mjx_data, FR_leg, body_id[1])
+    J_RL, _ = mjx.jac(mjx_model, mjx_data, RL_leg, body_id[2])
+    J_RR, _ = mjx.jac(mjx_model, mjx_data, RR_leg, body_id[3])
+
+    # Concatenate the Jacobians into a single matrix
+    J = jnp.concatenate([J_FL, J_FR, J_RL, J_RR], axis=1)
+    # Concatenate the positions of the legs into a single vector
+    current_leg = jnp.concatenate([FL_leg, FR_leg, RL_leg, RR_leg], axis=0)
+    current_leg_dot = J.T @ qvel
+    cartesian_space_action = Kp@(foot_ref-current_leg) + Kd@(foot_ref_dot-current_leg_dot)
+    
+    accelleration = cartesian_space_action.T + foot_ref_ddot
+
+    J_dot = (J - J_old)*sim_frequency
+    tau_fb_lin = D[6:] + (M @ jnp.linalg.pinv(J.T) @ (accelleration - J_dot.T@qvel))[6:]
+    tau_mpc = -(J@grf)[6:]
+    tau_PD = (J @ cartesian_space_action.T)[6:]
+    contact_mask = jnp.array([contact[0],contact[0],contact[0],contact[1],contact[1],contact[1],contact[2],contact[2],contact[2],contact[3],contact[3],contact[3]])
+    tau = tau_mpc*contact_mask + (1-contact_mask)*(tau_PD) + tau_fb_lin
+
+    return tau , J

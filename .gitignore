@@ -5,3 +5,4 @@ jax_cache/
 *.toml
 c_generated_code/
 **/__pycache__/
+*.csv

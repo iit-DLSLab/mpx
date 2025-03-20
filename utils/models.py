@@ -3,7 +3,7 @@ from jax import numpy as jnp
 from mujoco import mjx
 from mujoco.mjx._src import math
 
-def quadruped_srbd_dynamics(mass, inertia_inv, dt, x, u, t,parameter):
+def quadruped_srbd_dynamics(mass, inertia,inertia_inv, dt, x, u, t,parameter):
     # Extract state variables
     p = x[:3]
     quat = x[3:7]
@@ -23,7 +23,9 @@ def quadruped_srbd_dynamics(mass, inertia_inv, dt, x, u, t,parameter):
     p2 = p_legs[6:9]
     p3 = p_legs[9:]
 
-    omega_next = omega + inertia_inv@((jnp.cross(p0 - p, grf[:3])*contact[0] + jnp.cross(p1 - p, grf[3:6])*contact[1] + jnp.cross(p2 - p, grf[6:9])*contact[2] + jnp.cross(p3 - p, grf[9:12])*contact[3]))*dt
+    b_R_w = math.quat_to_mat(quat)
+    base_angular_wrench = jnp.cross(p0 - p, grf[:3])*contact[0] + jnp.cross(p1 - p, grf[3:6])*contact[1] + jnp.cross(p2 - p, grf[6:9])*contact[2] + jnp.cross(p3 - p, grf[9:12])*contact[3]
+    omega_next = omega + inertia_inv@(b_R_w.T@base_angular_wrench - jnp.cross(omega,inertia@omega))*dt
 
     # Semi-implicit Euler integration
     p_new = p + dp_next * dt
