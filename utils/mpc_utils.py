@@ -1,6 +1,8 @@
-import jax 
+import jax
 from jax import numpy as jnp
 from functools import partial
+from mujoco.mjx._src import math
+from jax.scipy.spatial.transform import Rotation
 
 def timer_run(duty_factor,step_freq, leg_time, dt):
     # Extract relevant fields
@@ -10,6 +12,26 @@ def timer_run(duty_factor,step_freq, leg_time, dt):
     contact = jnp.where(leg_time < duty_factor, 1, 0)
 
     return contact, leg_time
+def terrain_orientation(liftoff_pos):
+
+    # Calculate the vectors between the legs
+    vec_front_back = (liftoff_pos[:3] + liftoff_pos[3:6] - liftoff_pos[6:9] - liftoff_pos[9:12])/2
+    vec_left_right = (liftoff_pos[:3] + liftoff_pos[6:9] - liftoff_pos[3:6] - liftoff_pos[9:12])/2
+    # Compute the normal vector to the plane
+    normal_vector = jnp.cross(vec_front_back, vec_left_right)
+
+    # Normalize the vectors
+    vec_front_back = vec_front_back / math.norm(vec_front_back)
+    vec_left_right = vec_left_right / math.norm(vec_left_right)
+    normal_vector = normal_vector / math.norm(normal_vector)
+
+    # Create the rotation matrix
+    rotation_matrix = Rotation.from_matrix(jnp.stack([vec_front_back, vec_left_right, normal_vector], axis=1))
+
+    # Convert the rotation matrix to a quaternion
+    quat = rotation_matrix.as_quat()
+
+    return jnp.roll(quat,1)
 
 @partial(jax.jit, static_argnums=(0,1,2,3))
 def reference_generator(N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
@@ -21,44 +43,50 @@ def reference_generator(N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input
     # dq = x[13+n_joints:13+2*n_joints]
     ref_lin_vel = input[:3]
     ref_ang_vel = input[3:6]
-    robot_height = input[6]
-    p = jnp.array([p[0], p[1], robot_height])
+    # proprio_height = input[6] + jnp.sum(contact*foot[2::3])/jnp.sum(contact)
+    proprio_height = input[6] + jnp.sum(liftoff[2::3])/n_contact
+    p = jnp.array([p[0], p[1], proprio_height])
     p_ref_x = jnp.arange(N+1) * dt * ref_lin_vel[0] + p[0]
     p_ref_y = jnp.arange(N+1) * dt * ref_lin_vel[1] + p[1]
-    p_ref_z = jnp.ones(N+1) * robot_height
+    p_ref_z = jnp.ones(N+1) * proprio_height
     p_ref = jnp.stack([p_ref_x, p_ref_y, p_ref_z], axis=1)
-    quat_ref = jnp.tile(jnp.array([1, 0, 0, 0]), (N+1, 1))
+    quat_ref = jnp.tile(terrain_orientation(liftoff), (N+1, 1))
+    # quat_ref = jnp.tile(jnp.array([1, 0, 0, 0]), (N+1, 1))
     q_ref = jnp.tile(q0, (N+1, 1))
-    dp_ref = jnp.tile(ref_lin_vel, (N+1, 1))
+
     omega_ref = jnp.tile(ref_ang_vel, (N+1, 1))
     contact_sequence = jnp.zeros(((N+1), n_contact))
+    pitch = jnp.arcsin(2 * (quat_ref[0,0] * quat_ref[0,2] - quat_ref[0,3] * quat_ref[0,1]))
+    Rpitch = jnp.array([[jnp.cos(pitch), 0, jnp.sin(pitch)], [0, 1, 0], [-jnp.sin(pitch), 0, jnp.cos(pitch)]])
     yaw = jnp.arctan2(2*(quat[0]*quat[3] + quat[1]*quat[2]), 1 - 2*(quat[2]*quat[2] + quat[3]*quat[3]))
     Ryaw = jnp.array([[jnp.cos(yaw), -jnp.sin(yaw), 0],[jnp.sin(yaw), jnp.cos(yaw), 0],[0, 0, 1]])
+    dp_ref = jnp.tile(Ryaw@Rpitch@ref_lin_vel, (N+1, 1))
     foot_ref = jnp.tile(foot, (N+1, 1))
     foot = jnp.tile(p,n_contact) + foot0@jax.scipy.linalg.block_diag(Ryaw,Ryaw,Ryaw,Ryaw).T
     grf_ref = jnp.zeros((N+1, 3*n_contact))
     def foot_fn(t,carry):
 
-        new_t, contact_sequence,new_foot,liftoff_x,liftoff_y,liftoff_z,grf_new = carry
+        timer_seq, contact_sequence,new_foot,liftoff_x,liftoff_y,liftoff_z,grf_new = carry
 
         new_foot_x = new_foot[t-1,::3]
         new_foot_y = new_foot[t-1,1::3]
         new_foot_z = new_foot[t-1,2::3]
 
-        new_contact_sequence, new_t = timer_run(duty_factor, step_freq, new_t, dt)
-        
+        new_contact_sequence, new_t = timer_run(duty_factor, step_freq, timer_seq[t-1,:], dt)
+
         contact_sequence = contact_sequence.at[t,:].set(new_contact_sequence)
+        timer_seq = timer_seq.at[t,:].set(new_t)
 
         liftoff_x = jnp.where(jnp.logical_and(jnp.logical_not(contact_sequence[t,:]),contact_sequence[t-1,:]),new_foot_x,liftoff_x)
         liftoff_y = jnp.where(jnp.logical_and(jnp.logical_not(contact_sequence[t,:]),contact_sequence[t-1,:]),new_foot_y,liftoff_y)
         liftoff_z = jnp.where(jnp.logical_and(jnp.logical_not(contact_sequence[t,:]),contact_sequence[t-1,:]),new_foot_z,liftoff_z)
-        
+
         def calc_foothold(direction):
             f1 = 0.5*ref_lin_vel[direction]*duty_factor/step_freq
-            f2 = jnp.sqrt(robot_height/9.81)*(dp[direction]-ref_lin_vel[direction])
+            f2 = jnp.sqrt(proprio_height/9.81)*(dp[direction]-ref_lin_vel[direction])
             f = f1 + f2 + foot[direction::3]
             return f
-        
+
         foothold_x = calc_foothold(0)
         foothold_y = calc_foothold(1)
 
@@ -66,9 +94,9 @@ def reference_generator(N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input
             a0 = current_foot
             a1 = 0
             a2 = 3*(foothold - current_foot)
-            a3 = -2/3*a2 
+            a3 = -2/3*a2
             return a0 + a1*val + a2*val**2 + a3*val**3
-        
+
         def cubic_splineZ(current_foot, foothold, step_height,val):
             a0 = current_foot
             a3 = 8*step_height - 6*foothold -2*a0
@@ -85,19 +113,20 @@ def reference_generator(N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input
 
         grf_new = grf_new.at[t,2::3].set((new_contact_sequence*500/jnp.sum(new_contact_sequence)))
 
-        return (new_t, contact_sequence,new_foot,liftoff_x,liftoff_y,liftoff_z,grf_new)
-    
+        return (timer_seq, contact_sequence,new_foot,liftoff_x,liftoff_y,liftoff_z,grf_new)
+
     liftoff_x = liftoff[::3]
     liftoff_y = liftoff[1::3]
     liftoff_z = liftoff[2::3]
-
-    init_carry = (t_timer, contact_sequence,foot_ref,liftoff_x,liftoff_y,liftoff_z,grf_ref)
-    _, contact_sequence,foot_ref, liftoff_x,liftoff_y,liftoff_z,grf_ref = jax.lax.fori_loop(0,N+1,foot_fn, init_carry)
+    timer_sequence_in = jnp.tile(t_timer, (N+1, 1))
+    init_carry = (timer_sequence_in, contact_sequence,foot_ref,liftoff_x,liftoff_y,liftoff_z,grf_ref)
+    timer_sequence, contact_sequence,foot_ref, liftoff_x,liftoff_y,liftoff_z,grf_ref = jax.lax.fori_loop(0,N+1,foot_fn, init_carry)
 
     liftoff = liftoff.at[::3].set(liftoff_x)
     liftoff = liftoff.at[1::3].set(liftoff_y)
     liftoff = liftoff.at[2::3].set(liftoff_z)
-    return jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref, foot_ref, contact_sequence,grf_ref], axis=1),jnp.concatenate([ contact_sequence,foot_ref], axis=1), liftoff
+
+    return jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref, foot_ref, contact_sequence,grf_ref,jnp.tile(jnp.array([duty_factor,step_freq]),(N+1, 1))], axis=1),jnp.concatenate([ contact_sequence,foot_ref], axis=1), liftoff
 
 @partial(jax.jit, static_argnums=(0,1,2))
 def reference_generator_srbd(N,dt,n_contact,foot0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
@@ -136,19 +165,19 @@ def reference_generator_srbd(N,dt,n_contact,foot0,t_timer, x, foot, input, duty_
         new_foot_z = new_foot[t-1,2::3]
 
         new_contact_sequence, new_t = timer_run(duty_factor, step_freq, new_t, dt)
-        
+
         contact_sequence = contact_sequence.at[t,:].set(new_contact_sequence)
 
         liftoff_x = jnp.where(jnp.logical_and(jnp.logical_not(contact_sequence[t,:]),contact_sequence[t-1,:]),new_foot_x,liftoff_x)
         liftoff_y = jnp.where(jnp.logical_and(jnp.logical_not(contact_sequence[t,:]),contact_sequence[t-1,:]),new_foot_y,liftoff_y)
         liftoff_z = jnp.where(jnp.logical_and(jnp.logical_not(contact_sequence[t,:]),contact_sequence[t-1,:]),new_foot_z,liftoff_z)
-        
+
         def calc_foothold(direction):
             f1 = 0.5*ref_lin_vel[direction]*duty_factor/step_freq
             f2 = jnp.sqrt(robot_height/9.81)*(dp[direction]-ref_lin_vel[direction])
             f = f1 + f2 + foot[direction::3]
             return f
-        
+
         foothold_x = calc_foothold(0)
         foothold_y = calc_foothold(1)
 
@@ -156,16 +185,16 @@ def reference_generator_srbd(N,dt,n_contact,foot0,t_timer, x, foot, input, duty_
             a0 = current_foot
             a1 = 0
             a2 = 3*(foothold - current_foot)
-            a3 = -2/3*a2 
+            a3 = -2/3*a2
             return a0 + a1*val + a2*val**2 + a3*val**3
-        
+
         def cubic_splineZ(current_foot, foothold, step_height,val):
             a0 = current_foot
             a3 = 8*step_height - 6*foothold -2*a0
             a2 = -foothold +a0 -2*a3
             a1 = +2*foothold -2*a0 +a3
             return a0 + a1*val + a2*val**2 + a3*val**3
-        
+
         def cubic_splineXY_dot(current_foot, foothold,val):
             a1 = 0
             a2 = 3*(foothold - current_foot)
@@ -212,7 +241,7 @@ def reference_generator_srbd(N,dt,n_contact,foot0,t_timer, x, foot, input, duty_
         grf_new = grf_new.at[t,2::3].set((new_contact_sequence*500/jnp.sum(new_contact_sequence)))
 
         return (new_t, contact_sequence,new_foot,new_foot_dot,new_foot_ddot,liftoff_x,liftoff_y,liftoff_z,grf_new)
-    
+
     liftoff_x = liftoff[::3]
     liftoff_y = liftoff[1::3]
     liftoff_z = liftoff[2::3]
@@ -261,7 +290,7 @@ def whole_body_interface(model, mjx_model, contact_id, body_id,sim_frequency,Kp,
     current_leg = jnp.concatenate([FL_leg, FR_leg, RL_leg, RR_leg], axis=0)
     current_leg_dot = J.T @ qvel
     cartesian_space_action = Kp@(foot_ref-current_leg) + Kd@(foot_ref_dot-current_leg_dot)
-    
+
     accelleration = cartesian_space_action.T + foot_ref_ddot
 
     J_dot = (J - J_old)*sim_frequency

@@ -111,8 +111,8 @@ tau0 = jnp.array([
 # grf0 = jnp.array([0,0,198,0,0,50,0,0,198,0,0,50])
 # # Define the cost function
 W = jax.scipy.linalg.block_diag(Qp, Qrot, Qq, Qdp, Qomega, Qdq, Qleg, Qtau,Qgrf)
-cost = partial(mpc_objectives.humanoid_wb_obj, W, n_joints, n_contact, N)
-hessian_approx = partial(mpc_objectives.humanoid_wb_hessian_gn, W, n_joints, n_contact)
+cost = partial(mpc_objectives.humanoid_wb_obj, n_joints, n_contact, N)
+hessian_approx = partial(mpc_objectives.humanoid_wb_hessian_gn, n_joints, n_contact)
 dynamics = partial(mpc_dyn_model.humanoid_wb_dynamics,model,mjx_model,contact_id, body_id,n_joints,dt)
 # # Solve
 p_ref = jnp.array([0, 0, 0.9])
@@ -140,6 +140,7 @@ def work(reference,parameter,x0,X0,U0,V0):
         False,
         reference,
         parameter,
+        W,
         x0,
         X0,
         U0,
