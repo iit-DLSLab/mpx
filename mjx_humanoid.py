@@ -194,7 +194,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             foot_op = np.array([data.geom_xpos[contact_id[i]] for i in range(n_contact)])
             contact_op , timer_t_sim = mpc_utils.timer_run(duty_factor = duty_factor, step_freq = step_freq ,leg_time=timer_t_sim, dt=1/mpc_frequency)
             timer_t = timer_t_sim.copy()
-            ref_base_lin_vel = jnp.array([0.5,0,0])
+            ref_base_lin_vel = jnp.array([0.2,0,0])
             ref_base_ang_vel = jnp.array([0,0,0])
         
             foot_op_vec = foot_op.flatten()
@@ -204,13 +204,13 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                            0.9])
             start = timer()
             reference , parameter , liftoff = jitted_reference_generator(p_legs0,p0[7:7+n_joints],timer_t, jnp.concatenate([qpos,qvel]), foot_op_vec, input, duty_factor = duty_factor,  step_freq= step_freq ,step_height=step_height,liftoff=liftoff)
-            X,U,V =  work(reference,parameter,x0,X0,U0,V0)
+            X,U,V,_ =  work(reference,parameter,x0,X0,U0,V0)
             X.block_until_ready()
             stop = timer()
             print(f"Time elapsed: {stop-start}")
             tau_val = U[:4,:n_joints]
             grf = X[1,13+2*n_joints+n_contact*3:]
-            # print("grf",grf)    
+           
             high_freq_counter = 0
             if jnp.any(jnp.isnan(tau_val)):
                 print('Nan detected')

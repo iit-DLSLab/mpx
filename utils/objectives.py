@@ -75,32 +75,6 @@ def quadruped_srbd_hessian_gn(W,n_contact,x, u, t, reference):
     return J_x(x,u).T@W@J_x(x,u), J_u(x,u).T@W@J_u(x,u) + H_constraint, J_x(x,u).T@W@J_u(x,u)
 
 def quadruped_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
-
-        # # Create a new data object for the simulation
-        # mjx_data = mjx.make_data(model)
-        # # Update the position and velocity in the data object
-        # mjx_data = mjx_data.replace(qpos=x[:n_joints+7], qvel=x[n_joints+7:2*n_joints+13])
-
-        # # Perform forward kinematics and dynamics computations
-        # mjx_data = mjx.fwd_position(mjx_model, mjx_data)
-        # # mjx_data = mjx.fwd_velocity(mjx_model, mjx_data)
-
-        # # Get the positions of the contact points on the legs
-        # FL_leg = mjx_data.geom_xpos[contact_id[0]]
-        # FR_leg = mjx_data.geom_xpos[contact_id[1]]
-        # RL_leg = mjx_data.geom_xpos[contact_id[2]]
-        # RR_leg = mjx_data.geom_xpos[contact_id[3]]
-
-        # # Compute the Jacobians for each leg
-        # J_FL, _ = mjx.jac(mjx_model, mjx_data, FL_leg, body_id[0])
-        # J_FR, _ = mjx.jac(mjx_model, mjx_data, FR_leg, body_id[1])
-        # J_RL, _ = mjx.jac(mjx_model, mjx_data, RL_leg, body_id[2])
-        # J_RR, _ = mjx.jac(mjx_model, mjx_data, RR_leg, body_id[3])
-
-        # # Concatenate the Jacobians into a single matrix
-        # J = jnp.concatenate([J_FL, J_FR, J_RL, J_RR], axis=1)
-
-        # foot_speed = J.T @ x[n_joints+7:13+2*n_joints]
     
     p = x[:3]
     quat = x[3:7]
@@ -118,7 +92,7 @@ def quadruped_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
     dp_ref = reference[t,7+n_joints:10+n_joints]
     omega_ref = reference[t,10+n_joints:13+n_joints]
     p_leg_ref = reference[t,13+n_joints:13+n_joints+3*n_contact]
-
+    stand_up_flag = reference[t,-1]
     mu = 0.7
     friction_cone = mu*grf[2::3] - jnp.sqrt(jnp.square(grf[1::3]) + jnp.square(grf[::3]) + jnp.ones(n_contact)*1e-2)
     friction_cone = penaly(friction_cone)
@@ -126,25 +100,12 @@ def quadruped_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
         44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44,
         44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44 ])
     torque_limits = jnp.kron(jnp.eye(n_joints),(jnp.array([-1,1]))).T@tau+torque_limits + jnp.ones_like(torque_limits)*1e-2
-    # pitch = jnp.arcsin(2 * (quat_ref[0] * quat_ref[2] - quat_ref[3] * quat_ref[1]))
-    # Rpitch = jnp.array([[jnp.cos(pitch), 0, jnp.sin(pitch)], [0, 1, 0], [-jnp.sin(pitch), 0, jnp.cos(pitch)]])
-    # yaw = jnp.arctan2(2*(quat[0]*quat[3] + quat[1]*quat[2]), 1 - 2*(quat[2]*quat[2] + quat[3]*quat[3]))
-    # Ryaw = jnp.array([[jnp.cos(yaw), -jnp.sin(yaw), 0],[jnp.sin(yaw), jnp.cos(yaw), 0],[0, 0, 1]])
-    # foot = jnp.tile(p,n_contact) + foot0@jax.scipy.linalg.block_diag(Ryaw@Rpitch,Ryaw@Rpitch,Ryaw@Rpitch,Ryaw@Rpitch).T
-    duty_factor = reference[t,-2]
-    step_freq = reference[t,-1]
-
-    # def calc_foothold(direction):
-    #     f1 = 0.5*dp_ref[direction]*duty_factor/step_freq
-    #     # f2 = jnp.sqrt(0.27/9.81)*(dp[direction]-dp_ref[direction])
-    #     f = f1 + foot[direction::3]
-    #     return f
-  
     contact = reference[t,13+n_joints+3*n_contact:13+n_joints+4*n_contact]
     # flag_inital_phase_swing = jnp.where(timer_leg < (duty_factor + 0.2*(1-duty_factor)), 0, 1)
     stage_cost = (p - p_ref).T @ W[:3,:3] @ (p - p_ref) + math.quat_sub(quat,quat_ref).T@W[3:6,3:6]@math.quat_sub(quat,quat_ref) + (q - q_ref).T @ W[6:6+n_joints,6:6+n_joints] @ (q - q_ref) +\
                  (dp - dp_ref).T @ W[6+n_joints:9+n_joints,6+n_joints:9+n_joints] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9+n_joints:12+n_joints,9+n_joints:12+n_joints] @ (omega - omega_ref) + dq.T @ W[12+n_joints:12+2*n_joints,12+n_joints:12+2*n_joints] @ dq +\
-                 (p_leg - p_leg_ref).T @W[12+2*n_joints:12+2*n_joints+3*n_contact,12+2*n_joints:12+2*n_joints+3*n_contact]@ (p_leg - p_leg_ref)+ \
+                 (p_leg[:6] - p_leg_ref[:6]).T @W[12+2*n_joints:12+2*n_joints+6,12+2*n_joints:12+2*n_joints+6]@ (p_leg[:6] - p_leg_ref[:6])+ \
+                 (p_leg[6:] - p_leg_ref[6:]).T @W[12+2*n_joints:12+2*n_joints+6,12+2*n_joints:12+2*n_joints+6]@ (p_leg[6:] - p_leg_ref[6:])+ \
                  tau.T @ W[12+2*n_joints+3*n_contact:12+3*n_joints+3*n_contact,12+2*n_joints+3*n_contact:12+3*n_joints+3*n_contact] @ tau +\
                  jnp.sum(friction_cone*contact) + jnp.sum(penaly(torque_limits))
                 #  (foot_speed[::3]*flag_inital_phase_swing).T@(foot_speed[::3]*flag_inital_phase_swing)*1e1 + (foot_speed[2::3]*flag_inital_phase_swing).T@(foot_speed[2::3]*flag_inital_phase_swing)*1e1#+ jnp.sum(friction_cone)
@@ -157,38 +118,7 @@ def quadruped_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
 
 def quadruped_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
 
-    # # Create a new data object for the simulation
-    # mjx_data = mjx.make_data(model)
-    # # Update the position and velocity in the data object
-    # mjx_data = mjx_data.replace(qpos=x[:n_joints+7], qvel=x[n_joints+7:2*n_joints+13])
-
-    # # Perform forward kinematics and dynamics computations
-    # mjx_data = mjx.fwd_position(mjx_model, mjx_data)
-    # # mjx_data = mjx.fwd_velocity(mjx_model, mjx_data)
-
-    # # Get the positions of the contact points on the legs
-    # FL_leg = mjx_data.geom_xpos[contact_id[0]]
-    # FR_leg = mjx_data.geom_xpos[contact_id[1]]
-    # RL_leg = mjx_data.geom_xpos[contact_id[2]]
-    # RR_leg = mjx_data.geom_xpos[contact_id[3]]
-
-    # # Compute the Jacobians for each leg
-    # J_FL, _ = mjx.jac(mjx_model, mjx_data, FL_leg, body_id[0])
-    # J_FR, _ = mjx.jac(mjx_model, mjx_data, FR_leg, body_id[1])
-    # J_RL, _ = mjx.jac(mjx_model, mjx_data, RL_leg, body_id[2])
-    # J_RR, _ = mjx.jac(mjx_model, mjx_data, RR_leg, body_id[3])
-
-    # # Concatenate the Jacobians into a single matrix
-    # J = jnp.concatenate([J_FL, J_FR, J_RL, J_RR], axis=1)
-
-    # foot_speed = J.T @ x[n_joints+7:13+2*n_joints]
-
-    duty_factor = reference[t,-2]
-    step_freq = reference[t,-1]
-
-    # timer_leg = reference[t,13+n_joints+3*n_contact:13+n_joints+4*n_contact]
     contact = reference[t,13+n_joints+3*n_contact:13+n_joints+4*n_contact]
-    # flag_inital_phase_swing = jnp.where(timer_leg < (duty_factor + 0.4*(1-duty_factor)), 0, 1)
 
     def residual(x,u):
 
@@ -243,7 +173,8 @@ def quadruped_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
     hessian_penaly = jax.grad(jax.grad(penaly))
     J_friction_cone = jax.jacobian(friction_constraint)
     J_torque = jax.jacobian(torque_constraint)
-    
+    stand_up_flag = reference[t,-1]
+    # W = W.at[12+2*n_joints + 6:12+2*n_joints+3*n_contact,12+2*n_joints + 6:12+2*n_joints+3*n_contact].set(W[12+2*n_joints + 6:12+2*n_joints+3*n_contact,12+2*n_joints + 6:12+2*n_joints+3*n_contact]*stand_up_flag)
     H_penalty = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(friction_constraint(x)), -1e6, 1e6)*contact)
     H_penalty_torque = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(torque_constraint(u)), -1e6, 1e6))
     H_constraint = J_friction_cone(x).T@H_penalty@J_friction_cone(x)
@@ -268,7 +199,7 @@ def humanoid_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
     dp_ref = reference[t,7+n_joints:10+n_joints]
     omega_ref = reference[t,10+n_joints:13+n_joints]
     p_leg_ref = reference[t,13+n_joints:13+n_joints+3*n_contact]
-    grf_ref = reference[t,13+n_joints+4*n_contact:]
+    grf_ref = reference[t,13+n_joints+4*n_contact:13+n_joints+7*n_contact]
 
     mu = 0.7
     friction_cone = mu*grf[2::3] - jnp.sqrt(jnp.square(grf[1::3]) + jnp.square(grf[::3]) + jnp.ones(n_contact)*1e-1)
@@ -318,7 +249,7 @@ def humanoid_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
         dp_ref = reference[t,7+n_joints:10+n_joints]
         omega_ref = reference[t,10+n_joints:13+n_joints]
         p_leg_ref = reference[t,13+n_joints:13+n_joints+3*n_contact]
-        grf_ref = reference[t,13+n_joints+4*n_contact:]
+        grf_ref = reference[t,13+n_joints+4*n_contact:13+n_joints+7*n_contact]
         p_res = (p - p_ref).T
         quat_res = math.quat_sub(quat,quat_ref).T
         q_res = (q - q_ref).T
