@@ -277,6 +277,9 @@ class MPCControllerWrapper:
         self.step_height = config.step_height
         self.robot_height = config.initial_height
         self.tau0 = np.zeros(config.n_joints)
+        self.start_time = 0
+        # self.config.W = self.config.W.at[12:18,12:18].set(jnp.diag(jnp.ones(6)) * 1e2)
+        # self.config.W = self.config.W.at[42:48 ,42:48].set(jnp.diag(jnp.ones(6)) * 1e0)
     
     def run(self, qpos, qvel, input):
         """
@@ -293,20 +296,20 @@ class MPCControllerWrapper:
         """
         #compensate for the time delay
         #get forward kinematics for foot position 
-        # start_preap = timer()
+       
         self.data.qpos = qpos 
-        # self.data.qvel = qvel 
+       
         mujoco.mj_kinematics(self.model, self.data)
         foot_op = np.array([self.data.geom_xpos[self.contact_id[i]] for i in range(self.config.n_contact)])
         #set initial state
-        # stop_prep = timer()
-        # start_to_device = timer()
         input[6] = self.robot_height
         x0 = jnp.concatenate([qpos, qvel,foot_op.flatten(),jnp.zeros(3*self.config.n_contact)])
         input = jnp.array(input)
 
-        # stop_to_device = timer()
 
+
+        # start = timer()
+       
         # start = timer()
         # Update the timer state for the gait reference.
         _ , self.contact_time = self._timer_run(self.duty_factor,self.step_freq,self.contact_time,1/self.mpc_frequency)
@@ -332,10 +335,8 @@ class MPCControllerWrapper:
             self.V0
             )
         X.block_until_ready()
-        
-        # stop = timer()  
        
-        # Warm-start for the next call: shift trajectories forward.
+        # # Warm-start for the next call: shift trajectories forward.   
     
         self.U0, self.X0, self.V0, tau_temp, q_temp, dq_temp = self.update_and_extract(U, X, V, x0, self.X0, self.U0)
 

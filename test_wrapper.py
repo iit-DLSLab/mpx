@@ -9,7 +9,7 @@ import os
  
 import jax.numpy as jnp
 import jax
- 
+import mujoco
 # Update JAX configuration
 jax.config.update("jax_compilation_cache_dir", "./jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
@@ -61,7 +61,7 @@ n_env = 2
 mpc = mpc_wrapper.MPCControllerWrapper(config)
 env.render()
 ids = []
-for i in range(config.N*4):
+for i in range(config.N*12):
      ids.append(render_vector(env.viewer,
               np.zeros(3),
               np.zeros(3),
@@ -78,6 +78,7 @@ q = config.q0.copy()
 dq = jnp.zeros(config.n_joints)
 mpc_time = 0
 mpc.robot_height = config.robot_height
+mpc.reset(env.mjData.qpos.copy(),env.mjData.qvel.copy())
 while env.viewer.is_running():
  
     qpos = env.mjData.qpos.copy()
@@ -101,7 +102,7 @@ while env.viewer.is_running():
             
                 tau_fb = -3*(qvel[6:6+config.n_joints])
                 mpc_time += 1
-                state, reward, is_terminated, is_truncated, info = env.step(action= 0.7*tau + 0.3*tau_old + tau_fb)
+                state, reward, is_terminated, is_truncated, info = env.step(action=tau + tau_fb)
                 counter += 1
         start = timer()
         tau_old = tau
@@ -172,7 +173,8 @@ while env.viewer.is_running():
     tau_fb = -3*(qvel[6:6+config.n_joints])
     # tau_fb = K@(x-np.concatenate([qpos,qvel]))
     mpc_time += 1
-    state, reward, is_terminated, is_truncated, info = env.step(action= 0.7*tau + 0.3*tau_old + tau_fb)
+    state, reward, is_terminated, is_truncated, info = env.step(action= tau + tau_fb)
+    # mujoco.mj_step(env.mjModel, env.mjData)
     counter += 1
     
     # if False:

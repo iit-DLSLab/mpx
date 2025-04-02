@@ -41,10 +41,10 @@ q0_init = jnp.array([-0.2, 0.8, -1.8, -0.2, 0.8, -1.8, -0.2, 0.8, -1.8, -0.2, 0.
 
 #alingo
 p_legs0 = jnp.array([
-    0.27092872, 0.174, 0.02074775,  # Initial position of the front left leg
-    0.27092872, -0.174, 0.0207477, # Initial position of the front right leg
-   -0.20887128, 0.174, 0.02074775,  # Initial position of the rear left leg
-   -0.20887128, -0.174  ,  0.0207477   # Initial position of the rear right leg
+    0.27092872, 0.174, -0.31,  # Initial position of the front left leg
+    0.27092872, -0.174, -0.31, # Initial position of the front right leg
+   -0.20887128, 0.174, -0.31,  # Initial position of the rear left leg
+   -0.20887128, -0.174  , -0.31   # Initial position of the rear right leg
 ])
 #go2
 # p_legs0 = jnp.array([

@@ -205,31 +205,31 @@
 
     <sensor>
 
-        <jointpos name="FR_hip_pos"     joint="FR_hip_joint"/>
-        <jointpos name="FR_thigh_pos"   joint="FR_thigh_joint"/>
-        <jointpos name="FR_calf_pos"    joint="FR_calf_joint"/>
         <jointpos name="FL_hip_pos"     joint="FL_hip_joint"/>
         <jointpos name="FL_thigh_pos"   joint="FL_thigh_joint"/>
         <jointpos name="FL_calf_pos"    joint="FL_calf_joint"/>
-        <jointpos name="RR_hip_pos"     joint="RR_hip_joint"/>
-        <jointpos name="RR_thigh_pos"   joint="RR_thigh_joint"/>
-        <jointpos name="RR_calf_pos"    joint="RR_calf_joint" />
+        <jointpos name="FR_hip_pos"     joint="FR_hip_joint"/>
+        <jointpos name="FR_thigh_pos"   joint="FR_thigh_joint"/>
+        <jointpos name="FR_calf_pos"    joint="FR_calf_joint"/>
         <jointpos name="RL_hip_pos"     joint="RL_hip_joint"/>
         <jointpos name="RL_thigh_pos"   joint="RL_thigh_joint"/>
         <jointpos name="RL_calf_pos"    joint="RL_calf_joint"/>
+        <jointpos name="RR_hip_pos"     joint="RR_hip_joint"/>
+        <jointpos name="RR_thigh_pos"   joint="RR_thigh_joint"/>
+        <jointpos name="RR_calf_pos"    joint="RR_calf_joint" />
 
-        <jointvel name="FR_hip_vel"     joint="FR_hip_joint"/>
-        <jointvel name="FR_thigh_vel"   joint="FR_thigh_joint"/>
-        <jointvel name="FR_calf_vel"    joint="FR_calf_joint"/>
         <jointvel name="FL_hip_vel"     joint="FL_hip_joint"/>
         <jointvel name="FL_thigh_vel"   joint="FL_thigh_joint"/>
         <jointvel name="FL_calf_vel"    joint="FL_calf_joint"/>
-        <jointvel name="RR_hip_vel"     joint="RR_hip_joint"/>
-        <jointvel name="RR_thigh_vel"   joint="RR_thigh_joint"/>
-        <jointvel name="RR_calf_vel"    joint="RR_calf_joint" />
+         <jointvel name="FR_hip_vel"     joint="FR_hip_joint"/>
+        <jointvel name="FR_thigh_vel"   joint="FR_thigh_joint"/>
+        <jointvel name="FR_calf_vel"    joint="FR_calf_joint"/>
         <jointvel name="RL_hip_vel"     joint="RL_hip_joint"/>
         <jointvel name="RL_thigh_vel"   joint="RL_thigh_joint"/>
         <jointvel name="RL_calf_vel"    joint="RL_calf_joint"/>
+        <jointvel name="RR_hip_vel"     joint="RR_hip_joint"/>
+        <jointvel name="RR_thigh_vel"   joint="RR_thigh_joint"/>
+        <jointvel name="RR_calf_vel"    joint="RR_calf_joint" />
 
         <accelerometer name="Body_Acc" site="imu"/>
 
