@@ -115,6 +115,7 @@ def quadruped_wb_dynamics(model, mjx_model, contact_id, body_id, n_joints, dt, x
     x_next = jnp.concatenate([p, quat, q, v, current_leg, grf])
 
     return x_next
+
 def humanoid_wb_dynamics(model, mjx_model, contact_id, body_id, n_joints, dt, x, u, t, parameter):
 
     mjx_data = mjx.make_data(model)

@@ -1,44 +1,39 @@
 import os
-
+ 
 # Set environment variables for XLA flags
-# os.environ['XLA_FLAGS'] = (
-#     '--xla_gpu_enable_triton_softmax_fusion=true '
-#     '--xla_gpu_triton_gemm_any=true '
-#     # '--xla_gpu_deterministic_ops=true'
-# )
-
+#os.environ['XLA_FLAGS'] = (
+#    '--xla_gpu_enable_triton_softmax_fusion=true '
+#    '--xla_gpu_triton_gemm_any=true '
+    # '--xla_gpu_deterministic_ops=true'
+#)
+ 
 import jax.numpy as jnp
 import jax
-
+import mujoco
 # Update JAX configuration
 jax.config.update("jax_compilation_cache_dir", "./jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 # jax.config.update("jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir")
-
+ 
 import numpy as np
 import primal_dual_ilqr.primal_dual_ilqr.optimizers as optimizers
 from functools import partial
-import mujoco
 from gym_quadruped.quadruped_env import QuadrupedEnv
 import copy
 from gym_quadruped.utils.mujoco.visual import render_sphere, render_vector
-
-import utils.mpc_utils as mpc_utils
-import utils.models as mpc_dyn_model
-import utils.objectives as mpc_objectives
+ 
+import utils.mpc_wrapper as mpc_wrapper
 import utils.config as config
 
-from mujoco import mjx
-from mujoco.mjx._src import math
-
+from timeit import default_timer as timer
 # Set GPU device for JAX
-gpu_device = jax.devices('gpu')[0]
-jax.default_device(gpu_device)
-
+# gpu_device = jax.devices('gpu')[0]
+# jax.default_device(gpu_device)
+ 
 # Define robot and scene parameters
 robot_name = "aliengo"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
-scene_name = "flat"
+scene_name = "stairs"
 robot_feet_geom_names = dict(FR='FR',FL='FL', RR='RR' , RL='RL')
 robot_leg_joints = dict(FR=['FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint', ],
                         FL=['FL_hip_joint', 'FL_thigh_joint', 'FL_calf_joint', ],
@@ -46,7 +41,7 @@ robot_leg_joints = dict(FR=['FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint', ]
                         RL=['RL_hip_joint', 'RL_thigh_joint', 'RL_calf_joint'])
 mpc_frequency = 50.0
 state_observables_names = tuple(QuadrupedEnv.ALL_OBS)  # return all available state observables
-
+ 
 # Initialize simulation environment
 sim_frequency = 200.0
 env = QuadrupedEnv(robot=robot_name,
@@ -61,145 +56,118 @@ env = QuadrupedEnv(robot=robot_name,
                    state_obs_names=state_observables_names,  # Desired quantities in the 'state'
                    )
 obs = env.reset(random=False)
-
-# Load Mujoco model and data
-model = mujoco.MjModel.from_xml_path(config.model_path)
-data = mujoco.MjData(model)
-mjx_model = mjx.put_model(model)
-mjx_data = mjx.make_data(model)
-
-# Get contact and body IDs from configuration
-contact_id = []
-for name in config.contact_frame:
-    contact_id.append(mjx.name2id(mjx_model,mujoco.mjtObj.mjOBJ_GEOM,name))
-body_id = []
-for name in config.body_name:
-    body_id.append(mjx.name2id(mjx_model,mujoco.mjtObj.mjOBJ_BODY,name))
-
-# Initial state and control inputs
-x0 = jnp.concatenate([config.p0, config.quat0,config.q0, jnp.zeros(6+config.n_joints),config.p_legs0,jnp.zeros(3*config.n_contact)])
-U0 = jnp.tile(config.u_ref, (config.N, 1))
-X0 = jnp.tile(x0, (config.N + 1, 1))
-V0 = jnp.zeros((config.N + 1, config.n ))
-
-from timeit import default_timer as timer
-
-# Define cost and dynamics functions
-grf_scaling = 220
-cost = partial(mpc_objectives.quadruped_wb_obj, config.W, config.n_joints, config.n_contact, config.N)
-hessian_approx = partial(mpc_objectives.quadruped_wb_hessian_gn, config.W, config.n_joints, config.n_contact )
-dynamics = partial(mpc_dyn_model.quadruped_wb_dynamics,model,mjx_model,contact_id, body_id,config.n_joints,config.dt)
-
-# Define JAX jitted functions for MPC and reference generation
-@jax.jit
-def work(reference,parameter,x0,X0,U0,V0):
-    return optimizers.mpc(
-        cost,
-        dynamics,
-        hessian_approx,
-        False,
-        reference,
-        parameter,
-        x0,
-        X0,
-        U0,
-        V0,
-    )
-
-@jax.jit
-def jitted_reference_generator(foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
-    return mpc_utils.reference_generator(config.N,config.dt,config.n_joints,config.n_contact,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff)
-# Timer initialization
-timer_t_sim = config.timer_t.copy()
-contact, timer_t = mpc_utils.timer_run(duty_factor = config.duty_factor, step_freq = config.step_freq,leg_time=config.timer_t, dt=config.dt)
-liftoff = config.p_legs0.copy()
-
-counter = 0
-high_freq_counter = 0
+n_env = 2
+# Define the MPC wrapper
+mpc = mpc_wrapper.MPCControllerWrapper(config)
+env.mjData.qpos = jnp.concatenate([config.p0, config.quat0,config.q0])
 env.render()
 ids = []
-for i in range(config.N*4):
+for i in range(config.N*12):
      ids.append(render_vector(env.viewer,
               np.zeros(3),
               np.zeros(3),
               0.1,
               np.array([1, 0, 0, 1])))
-env.mjData.qpos = x0[:config.n_joints+7]
+counter = 0
 # Main simulation loop
+tau = jnp.zeros(config.n_joints)
+tau_old = jnp.zeros(config.n_joints)
+delay = int(0.015*sim_frequency)
+print('Delay: ',delay)
+q = config.q0.copy()
+dq = jnp.zeros(config.n_joints)
+mpc_time = 0
+mpc.robot_height = config.robot_height
+mpc.reset(env.mjData.qpos.copy(),env.mjData.qvel.copy())
 while env.viewer.is_running():
-
-    qpos = env.mjData.qpos
-    qvel = env.mjData.qvel
-    if counter % (sim_frequency / mpc_frequency) == 0 or counter == 0:
-
-        foot_op = np.array([env.feet_pos('world').FL, env.feet_pos('world').FR, env.feet_pos('world').RL, env.feet_pos('world').RR],order="F")
-        contact_op , timer_t_sim = mpc_utils.timer_run(duty_factor = config.duty_factor, step_freq = config.step_freq,leg_time=timer_t_sim, dt=1/mpc_frequency)
-        timer_t = timer_t_sim.copy()
-
-        ref_base_lin_vel, ref_base_ang_vel = env.target_base_vel()
-
-        foot_op_vec = foot_op.flatten()
-        x0 = jnp.concatenate([qpos, qvel,foot_op_vec,jnp.zeros(3*config.n_contact)])
-        input = jnp.array([ref_base_lin_vel[0],ref_base_lin_vel[1],ref_base_lin_vel[2],
+ 
+    qpos = env.mjData.qpos.copy()
+    qvel = env.mjData.qvel.copy()
+    if (counter % (sim_frequency / mpc_frequency) == 0 or counter == 0):
+    
+ 
+        ref_base_lin_vel = env._ref_base_lin_vel_H
+        ref_base_ang_vel =  np.array([0., 0., env._ref_base_ang_yaw_dot])
+ 
+        
+        input = np.array([ref_base_lin_vel[0],ref_base_lin_vel[1],ref_base_lin_vel[2],
                            ref_base_ang_vel[0],ref_base_ang_vel[1],ref_base_ang_vel[2],
                            config.robot_height])
         
-        reference , parameter , liftoff = jitted_reference_generator(config.p_legs0,config.q0,timer_t, jnp.concatenate([qpos,qvel]), foot_op_vec, input, duty_factor = config.duty_factor,  step_freq= config.step_freq ,step_height=config.step_height,liftoff=liftoff)
-        
-        X0 = X0.at[0].set(x0)
+        if counter != 0:
+            for i in range(delay):
+                qpos = env.mjData.qpos.copy()
+                qvel = env.mjData.qvel.copy()
+                # tau_fb = K@(x-np.concatenate([qpos,qvel]))
+
+                tau_fb = -3*(qvel[6:6+config.n_joints])
+                mpc_time += 1
+                state, reward, is_terminated, is_truncated, info = env.step(action=tau + tau_fb)
+                counter += 1
         start = timer()
-        X,U,V =  work(reference,parameter,x0,X0,U0,V0)
-        X.block_until_ready()
+        tau_old = tau
+        tau, q, dq = mpc.run(qpos,qvel,input)   
+        stop = timer()
+        print("Time taken for MPC: ", stop-start)   
+
+        mpc_time = 0
         stop = timer()
 
-        print(f"Time elapsed: {stop-start}")       
-        
-        # for leg in range(n_contact):
-        #     pleg = reference[:,13+n_joints:]
-        #     for i in range(N):
+        # tau = U[0,:config.n_joints]
+        # for leg in range(config.n_contact):
+        #     pleg = reference[:,13+config.n_joints:]
+        #     for i in range(config.N):
         #         render_sphere(viewer=env.viewer,
         #                   position = pleg[i,3*leg:3+3*leg],
         #                   diameter = 0.01,
-        #                   color=[parameter[i,leg],1,0,1],
-        #                   geom_id = ids[leg*N+i])
-        grf = X[1,13+2*config.n_joints+3*config.n_contact:]
-        for c in range(config.n_contact):
-                render_vector(env.viewer,
-                      grf[3*c:3*(c+1)],
-                      foot_op_vec[3*c:3*(c+1)],
-                      np.linalg.norm(grf[3*c:3*(c+1)])/500,
-                      np.array([1, 0, 0, 1]),
-                      ids[c])
-        tau_val = U[:4,:config.n_joints]
-        high_freq_counter = 0
-        if jnp.any(jnp.isnan(tau_val)):
-            print('Nan detected')
-            U0 = jnp.tile(config.u_ref, (config.N, 1))
-            X0 = jnp.tile(x0, (config.N + 1, 1))
-            V0 = jnp.zeros((config.N + 1, config.n ))
-        else:
-            shift = int(1/(config.dt*mpc_frequency))
-            U0 = jnp.concatenate([U[shift:],jnp.tile(U[-1:],(shift,1))])
-            X0 = jnp.concatenate([X[shift:],jnp.tile(X[-1:],(shift,1))])
-            V0 = jnp.concatenate([V[shift:],jnp.tile(V[-1:],(shift,1))])
+        #                   color=[0,1,0,1],
+        #                   geom_id = ids[leg*config.N+i])
+        # for i in range(config.N):
+        #     render_sphere(viewer=env.viewer,
+        #                   position = reference[i,:3],
+        #                   diameter = 0.01,
+        #                   color=[0,1,0,1],
+        #                   geom_id = ids[config.N*config.n_contact+config.N+i])
+        # time.sleep(1)
+        # grf = X[1,13+2*config.n_joints+3*config.n_contact:]
+        # for c in range(config.n_contact):
+        #         render_vector(env.viewer,
+        #               grf[3*c:3*(c+1)],
+        #               foot_op_vec[3*c:3*(c+1)],
+        #               np.linalg.norm(grf[3*c:3*(c+1)])/500,
+        #               np.array([1, 0, 0, 1]),
+        #               ids[c])
+        # tau_val = U[:4,:config.n_joints]
+        # high_freq_counter = 0
+        # if jnp.any(jnp.isnan(tau_val)):
+        #     print('Nan detected')
+        #     U0 = jnp.tile(config.u_ref, (config.N, 1))
+        #     X0 = jnp.tile(x0, (config.N + 1, 1))
+        #     V0 = jnp.zeros((config.N + 1, config.n ))
+        # else:
+        #     shift = int(1/(config.dt*mpc_frequency))
+        #     U0 = jnp.concatenate([U[shift:],jnp.tile(U[-1:],(shift,1))])
+        #     X0 = jnp.concatenate([X[shift:],jnp.tile(X[-1:],(shift,1))])
+        #     V0 = jnp.concatenate([V[shift:],jnp.tile(V[-1:],(shift,1))])
         
-    if counter % (sim_frequency * config.dt) == 0 or counter == 0:
-            tau = tau_val[high_freq_counter,:]
-            high_freq_counter += 1
-    # tau = 30*(config.q0 - qpos[7:7+config.n_joints]) - 5*qvel[6:6+config.n_joints]
-    # x0 = jitted_dyn(x0,tau,0,parameter)
-    # env.mjData.qpos = x0[:config.n_joints+7]
-    # env.mjData.qvel = x0[config.n_joints+7:2*config.n_joints+13]
-    # tau = jnp.zeros(config.n_joints)
-    state, reward, is_terminated, is_truncated, info = env.step(action=tau)
+    # if counter % (sim_frequency * config.dt) == 0 or counter == 0:
+    #         tau = tau_val[high_freq_counter,:]
+    #         high_freq_counter += 1
+
+    tau_fb = -3*(qvel[6:6+config.n_joints])
+    # tau_fb = K@(x-np.concatenate([qpos,qvel]))
+    mpc_time += 1
+    state, reward, is_terminated, is_truncated, info = env.step(action= tau + tau_fb)
+    # mujoco.mj_step(env.mjModel, env.mjData)
     counter += 1
-    if False:
-        env.reset(random=False)
-        timer_t = jnp.array([0000.5,0000.0,0000,0000.5])
-        liftoff = config.p_legs0.copy()
-        counter = 0
-        x0 = jnp.concatenate([config.p0, config.quat0,config.q0, jnp.zeros(6+config.n_joints),config.p_legs0,jnp.zeros(3*config.n_contact)])
-        U0 = jnp.tile(config.u_ref, (config.N, 1))
-        X0 = jnp.tile(x0, (config.N + 1, 1))
-        V0 = jnp.zeros((config.N + 1, config.n ))
+    
+    # if False:
+    #     env.reset(random=False)
+    #     timer_t = jnp.array([0000.5,0000.0,0000,0000.5])
+    #     liftoff = config.p_legs0.copy()
+    #     counter = 0
+    #     x0 = jnp.concatenate([config.p0, config.quat0,config.q0, jnp.zeros(6+config.n_joints),config.p_legs0,jnp.zeros(3*config.n_contact)])
+    #     U0 = jnp.tile(config.u_ref, (config.N, 1))
+    #     X0 = jnp.tile(x0, (config.N + 1, 1))
+    #     V0 = jnp.zeros((config.N + 1, config.n ))
     env.render()

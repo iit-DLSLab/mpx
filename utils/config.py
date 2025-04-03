@@ -79,10 +79,11 @@ Qtau  = jnp.diag(jnp.ones(n_joints)) * 1e-1  # Cost matrix for torques
 
 # For the leg contact cost, repeat the unit cost for each contact point.
 # Qleg_unit represents the cost per leg contact, and we tile it for each contact.
-Qleg_x = jnp.tile(jnp.array([1e4]),n_contact)  # Unit cost for leg contact
-Qleg_y = jnp.tile(jnp.array([1e4]),n_contact)  # Unit cost for leg contact
-Qleg_z = jnp.tile(jnp.array([1e5]),n_contact)  # Unit cost for leg contact
-Qleg  = jnp.diag(jnp.concatenate([Qleg_x,Qleg_y,Qleg_z]))  # Cost matrix for leg contacts
+Qleg_x = jnp.array([1e4])  # Unit cost for leg contact
+Qleg_y = jnp.array([1e4])  # Unit cost for leg contact
+Qleg_z = jnp.array([1e5])  # Unit cost for leg contact
+Qleg  = jnp.diag(jnp.tile(jnp.concatenate([Qleg_x,Qleg_y,Qleg_z]),n_contact))  # Cost matrix for leg contacts
+
 
 # Combine all cost matrices into a block diagonal matrix
 W = jax.scipy.linalg.block_diag(Qp, Qrot, Qq, Qdp, Qomega, Qdq, Qleg, Qtau)

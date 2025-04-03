@@ -11,8 +11,9 @@ import os
 #   "NCCL_LL_BUFFSIZE": "-2",
 #    "NCCL_PROTO": "SIMPLE,LL,LL128",
 #  })
-import jax.numpy as jnp
 import jax
+# jax.config.update('jax_platform_name', 'cpu')
+import jax.numpy as jnp
 jax.config.update("jax_compilation_cache_dir", "./jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
@@ -46,8 +47,6 @@ import utils.mpc_utils as mpc_utils
 import utils.objectives as mpc_objectives
 import utils.models as mpc_dyn_model
 
-gpu_device = jax.devices('gpu')[0]
-jax.default_device(gpu_device)
 model = mujoco.MjModel.from_xml_path('./data/unitree_h1/mjx_scene_h1_walk.xml')
 data = mujoco.MjData(model)
 mpc_frequency = 50.0
@@ -60,7 +59,7 @@ body_name = ['left_ankle_link','right_ankle_link']
 n_joints = 19
 n_contact = 4
 # # # Problem dimensions
-N = 100  # Number of stages
+N = 50  # Number of stages
 n =  13 + 2*n_joints + 3*n_contact + 3*n_contact # Number of states
 m = n_joints  # Number of controls (F)
 dt = 0.01 # Time step
@@ -82,7 +81,7 @@ p0 = jnp.array([0, 0, 0.91,
     1, 0, 0, 0,
     0, 0, -0.54, 1.2, -0.68,
     0, 0, -0.54, 1.2, -0.68,
-    0,
+    0,  
     0.5, 0.25, 0.0, 0.5,
     0.5, -0.25, 0.0, 0.5])
 x0 = jnp.concatenate([p0, jnp.zeros(6 + n_joints),p_legs0,jnp.array([0,0,125,0,0,125,0,0,125,0,0,125])])
@@ -148,10 +147,10 @@ def work(reference,parameter,x0,X0,U0,V0):
     )
 from timeit import default_timer as timer
 # # Timer
-duty_factor = 0.7
-step_freq = 1
+duty_factor = 0.65
+step_freq = 1.2
 step_height = 0.08
-timer_t = jnp.array([0.4,0.5,-0.1,0.0])
+timer_t = jnp.array([0.5,0.5,0.0,0.0])
 timer_t_sim = timer_t.copy()
 contact, timer_t = mpc_utils.timer_run(duty_factor = duty_factor, step_freq = step_freq,leg_time=timer_t, dt=dt)
 liftoff = p_legs0.copy()
@@ -194,7 +193,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             foot_op = np.array([data.geom_xpos[contact_id[i]] for i in range(n_contact)])
             contact_op , timer_t_sim = mpc_utils.timer_run(duty_factor = duty_factor, step_freq = step_freq ,leg_time=timer_t_sim, dt=1/mpc_frequency)
             timer_t = timer_t_sim.copy()
-            ref_base_lin_vel = jnp.array([0.2,0,0])
+            ref_base_lin_vel = jnp.array([1,0,0])
             ref_base_ang_vel = jnp.array([0,0,0])
         
             foot_op_vec = foot_op.flatten()
