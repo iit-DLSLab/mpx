@@ -88,8 +88,8 @@ x0 = jnp.concatenate([p0, jnp.zeros(6 + n_joints),p_legs0,jnp.array([0,0,125,0,0
 vel0 = jnp.zeros(6 + n_joints)  
 u0 = jnp.zeros(m)
 Qp = jnp.diag(jnp.array([0, 0, 1e4]))
-Qq = jnp.diag(jnp.array([ 4e-1, 4e-1, 4e-1, 4e-1, 4e-1,
-                          4e-1, 4e-1, 4e-1, 4e-1, 4e-1,
+Qq = jnp.diag(jnp.array([ 4e0, 4e0, 4e0, 4e0, 4e0,
+                          4e0, 4e0, 4e0, 4e0, 4e0,
                           4e1, 
                           4e1, 4e1, 4e1, 4e1,
                           4e1, 4e1, 4e1, 4e1])) 
@@ -97,11 +97,11 @@ Qdp = jnp.diag(jnp.array([1, 1, 1]))*1e3
 Qomega = jnp.diag(jnp.array([1, 1, 1]))*1e2
 Qdq = jnp.diag(jnp.ones(n_joints)) * 1e0
 Qrot = jnp.diag(jnp.array([1,1,1]))*1e3
-Qtau = jnp.diag(jnp.ones(n_joints)) * 1e-2
+Qtau = jnp.diag(jnp.ones(n_joints)) * 1e-3
 Qleg = jnp.diag(jnp.tile(jnp.array([1e3,1e3,1e5]),n_contact))
-Qgrf = jnp.diag(jnp.ones(3*n_contact))*1e-2
+Qgrf = jnp.diag(jnp.ones(3*n_contact))*1e-3
 tau0 = jnp.array([
-    -3.8866019e-01,  8.2269782e-01, -6.9408727e+00, -5.7233673e+01,
+    -3.8866019e-01,  8.2269782e-01, -6.9408727e+00, -5.7233673e+01, 
   9.7760363e+00,  3.9106184e-01, -1.3329812e+00, -6.8945923e+00,
  -5.7180595e+01,  9.7612352e+00, -4.5000316e-04, -1.1907737e+00,
   3.1719621e-02, -4.7352805e-04, -1.1461809e+00, -1.1899408e+00,
@@ -112,7 +112,7 @@ tau0 = jnp.array([
 W = jax.scipy.linalg.block_diag(Qp, Qrot, Qq, Qdp, Qomega, Qdq, Qleg, Qtau,Qgrf)
 cost = partial(mpc_objectives.humanoid_wb_obj, n_joints, n_contact, N)
 hessian_approx = partial(mpc_objectives.humanoid_wb_hessian_gn, n_joints, n_contact)
-dynamics = partial(mpc_dyn_model.humanoid_wb_dynamics,model,mjx_model,contact_id, body_id,n_joints,dt)
+dynamics = partial(mpc_dyn_model.h1_wb_dynamics,model,mjx_model,contact_id, body_id,n_joints,dt)
 # # Solve
 p_ref = jnp.array([0, 0, 0.9])
 quat_ref = jnp.array([1, 0, 0, 0])
@@ -131,7 +131,7 @@ X0 = jnp.tile(x0, (N + 1, 1))
 V0 = jnp.zeros((N + 1, n ))
 
 @jax.jit
-def work(reference,parameter,x0,X0,U0,V0):
+def work(reference,parameter,x0,X0,U0,V0,W):
     return optimizers.mpc(
         cost,
         dynamics,
@@ -193,7 +193,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             foot_op = np.array([data.geom_xpos[contact_id[i]] for i in range(n_contact)])
             contact_op , timer_t_sim = mpc_utils.timer_run(duty_factor = duty_factor, step_freq = step_freq ,leg_time=timer_t_sim, dt=1/mpc_frequency)
             timer_t = timer_t_sim.copy()
-            ref_base_lin_vel = jnp.array([1,0,0])
+            ref_base_lin_vel = jnp.array([0.2,0,0])
             ref_base_ang_vel = jnp.array([0,0,0])
         
             foot_op_vec = foot_op.flatten()
@@ -203,7 +203,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                            0.9])
             start = timer()
             reference , parameter , liftoff = jitted_reference_generator(p_legs0,p0[7:7+n_joints],timer_t, jnp.concatenate([qpos,qvel]), foot_op_vec, input, duty_factor = duty_factor,  step_freq= step_freq ,step_height=step_height,liftoff=liftoff)
-            X,U,V,_ =  work(reference,parameter,x0,X0,U0,V0)
+            X,U,V,_ =  work(reference,parameter,x0,X0,U0,V0,W)
             X.block_until_ready()
             stop = timer()
             print(f"Time elapsed: {stop-start}")
@@ -258,6 +258,8 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             high_freq_counter += 1
         counter += 1        
         data.ctrl = tau + 20*(X[high_freq_counter,7:7+n_joints]-qpos[7:7+n_joints]) + 5*(X[high_freq_counter,13+n_joints:13+2*n_joints] - qvel[6:6+n_joints])
+        data.ctrl = tau - 3*qvel[6:6+n_joints]
+        
         mujoco.mj_step(model, data)
         
         viewer.sync()

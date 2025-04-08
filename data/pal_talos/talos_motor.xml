@@ -1,0 +1,33 @@
+<mujoco model="talos">
+  <include file="talos_full.xml"/>
+
+  <actuator>
+    <motor name="torso_1_joint_torque" joint="torso_1_joint" ctrlrange="-200 200"/>
+    <motor name="torso_2_joint_torque" joint="torso_2_joint" ctrlrange="-200 200"/>
+    <motor name="arm_left_1_joint_torque" joint="arm_left_1_joint" ctrlrange="-100 100"/>
+    <motor name="arm_left_2_joint_torque" joint="arm_left_2_joint" ctrlrange="-100 100"/>
+    <motor name="arm_left_3_joint_torque" joint="arm_left_3_joint" ctrlrange="-70 70"/>
+    <motor name="arm_left_4_joint_torque" joint="arm_left_4_joint" ctrlrange="-70 70"/>
+    <motor name="arm_right_1_joint_torque" joint="arm_right_1_joint" ctrlrange="-100 100"/>
+    <motor name="arm_right_2_joint_torque" joint="arm_right_2_joint" ctrlrange="-100 100"/>
+    <motor name="arm_right_3_joint_torque" joint="arm_right_3_joint" ctrlrange="-70 70"/>
+    <motor name="arm_right_4_joint_torque" joint="arm_right_4_joint" ctrlrange="-70 70"/>
+    <motor name="leg_left_1_joint_torque" joint="leg_left_1_joint" ctrlrange="-100 100"/>
+    <motor name="leg_left_2_joint_torque" joint="leg_left_2_joint" ctrlrange="-160 160"/>
+    <motor name="leg_left_3_joint_torque" joint="leg_left_3_joint" ctrlrange="-160 160"/>
+    <motor name="leg_left_4_joint_torque" joint="leg_left_4_joint" ctrlrange="-400 400"/>
+    <motor name="leg_left_5_joint_torque" joint="leg_left_5_joint" ctrlrange="-160 160"/>
+    <motor name="leg_left_6_joint_torque" joint="leg_left_6_joint" ctrlrange="-100 100"/>
+    <motor name="leg_right_1_joint_torque" joint="leg_right_1_joint" ctrlrange="-100 100"/>
+    <motor name="leg_right_2_joint_torque" joint="leg_right_2_joint" ctrlrange="-160 160"/>
+    <motor name="leg_right_3_joint_torque" joint="leg_right_3_joint" ctrlrange="-160 160"/>
+    <motor name="leg_right_4_joint_torque" joint="leg_right_4_joint" ctrlrange="-400 400"/>
+    <motor name="leg_right_5_joint_torque" joint="leg_right_5_joint" ctrlrange="-160 160"/>
+    <motor name="leg_right_6_joint_torque" joint="leg_right_6_joint" ctrlrange="-100 100"/>
+  </actuator>
+
+  <keyframe>
+    <key
+      qpos="0 0 1.08 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"/>
+  </keyframe>
+</mujoco>
