@@ -116,8 +116,8 @@ tau0 = jnp.array([
 # tau0 = jnp.zeros(n_joints)
 # # Define the cost function
 W = jax.scipy.linalg.block_diag(Qp, Qrot, Qq, Qdp, Qomega, Qdq, Qleg, Qtau,Qgrf)
-cost = partial(mpc_objectives.humanoid_wb_obj, n_joints, n_contact, N)
-hessian_approx = partial(mpc_objectives.humanoid_wb_hessian_gn, n_joints, n_contact)
+cost = partial(mpc_objectives.talos_wb_obj, n_joints, n_contact, N)
+hessian_approx = partial(mpc_objectives.talos_wb_hessian_gn, n_joints, n_contact)
 dynamics = partial(mpc_dyn_model.talos_wb_dynamics,model,mjx_model,contact_id, body_id,n_joints,dt)
 # # # Solve
 
@@ -182,6 +182,14 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
     mujoco.mj_step(model, data)
     jitted_dynamics = jax.jit(dynamics)
     viewer.sync()
+    # J_fl_1 = np.zeros((3,model.nv))
+    # J_fl_2 = np.zeros((3,model.nv))
+    # J_fl_3 = np.zeros((3,model.nv))
+    # J_fl_4 = np.zeros((3,model.nv))
+    # J_rl_1 = np.zeros((3,model.nv))
+    # J_rl_2 = np.zeros((3,model.nv))
+    # J_rl_3 = np.zeros((3,model.nv))
+    # J_rl_4 = np.zeros((3,model.nv))
     while viewer.is_running():
         
         qpos = data.qpos.copy()
@@ -189,11 +197,24 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
         if counter % (sim_frequency / mpc_frequency) == 0 or counter == 0:
 
             foot_op = np.array([data.geom_xpos[contact_id[i]] for i in range(n_contact)])
+            foot_op_vec = foot_op.flatten()
+            # mujoco.mj_jac(m = model, d = data,jacp = J_fl_1,jacr = None, point = foot_op_vec[:3],body = body_id[0])
+            # mujoco.mj_jac(m = model, d = data,jacp = J_fl_2,jacr = None, point = foot_op_vec[3:6],body = body_id[0])
+            # mujoco.mj_jac(m = model, d = data,jacp = J_fl_3,jacr = None, point = foot_op_vec[6:9],body = body_id[0])
+            # mujoco.mj_jac(m = model, d = data,jacp = J_fl_4,jacr = None, point = foot_op_vec[9:12],body = body_id[0])
+
+            # mujoco.mj_jac(m = model, d = data,jacp = J_rl_1,jacr = None, point = foot_op_vec[12:15],body = body_id[1])
+            # mujoco.mj_jac(m = model, d = data,jacp = J_rl_2,jacr = None, point = foot_op_vec[15:18],body = body_id[1])
+            # mujoco.mj_jac(m = model, d = data,jacp = J_rl_3,jacr = None, point = foot_op_vec[18:21],body = body_id[1])
+            # mujoco.mj_jac(m = model, d = data,jacp = J_rl_4,jacr = None, point = foot_op_vec[21:24],body = body_id[1])
+    
+            # J = np.concatenate([J_fl_1,J_fl_2,J_fl_3,J_fl_4,J_rl_1,J_rl_2,J_rl_3,J_rl_4],axis=0)
+            # g_dot = J.T @ qvel
             contact_op , timer_t_sim = mpc_utils.timer_run(duty_factor = duty_factor, step_freq = step_freq ,leg_time=timer_t_sim, dt=1/mpc_frequency)
             timer_t = timer_t_sim.copy()
             ref_base_lin_vel = jnp.array([0.5,0,0])
             ref_base_ang_vel = jnp.array([0,0,0])
-            foot_op_vec = foot_op.flatten()
+            
             x0 = jnp.concatenate([qpos, qvel,foot_op_vec])
             input = jnp.array([ref_base_lin_vel[0],ref_base_lin_vel[1],ref_base_lin_vel[2],
                            ref_base_ang_vel[0],ref_base_ang_vel[1],ref_base_ang_vel[2],
@@ -212,7 +233,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 print('Nan detected')
                 U0 = jnp.tile(u_ref, (N, 1))
                 V0 = jnp.zeros((N + 1,n ))
-                x0 = jnp.concatenate([p0, jnp.zeros(6+n_joints),p_legs0,np.zeros(3*n_contact)])
+                x0 = jnp.concatenate([p0, jnp.zeros(6+n_joints),p_legs0])
                 X0 = jnp.tile(x0, (N + 1, 1))
                 U = U0.copy()
             else:
