@@ -60,10 +60,10 @@ body_name = ['leg_left_6_link','leg_right_6_link']
 n_joints = 22
 n_contact = len(contact_frame)
 # # # Problem dimensions
-N = 50  # Number of stages
+N = 25  # Number of stages
 n =  13 + 2*n_joints + 3*n_contact # Number of states
 m = n_joints  + 3*n_contact # Number of controls (F)
-dt = 0.01 # Time step
+dt = 0.02 # Time step
 p_legs0 = jnp.array([ 0.08592681,  0.145, 0.01690434,
                       0.08592681,  0.025, 0.01690434,
                      -0.11407319,  0.145, 0.01690434,
@@ -144,7 +144,7 @@ def work(reference,parameter,W,x0,X0,U0,V0):
 from timeit import default_timer as timer
 # # Timer
 duty_factor = 0.7
-step_freq = 1.0
+step_freq = 1.2
 step_height = 0.08
 timer_t = jnp.array([0.5,0.5,0.5,0.5,0.0,0.0,0.0,0.0])
 timer_t_sim = timer_t.copy()
@@ -152,10 +152,12 @@ contact, timer_t = mpc_utils.timer_run(duty_factor = duty_factor, step_freq = st
 liftoff = p_legs0.copy()
 counter = 0
 high_freq_counter = 0
+mpc_time = 0
 @jax.jit
 def jitted_reference_generator(foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
     return mpc_utils.reference_generator(N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff)
 ids = []
+tau = jnp.zeros(n_joints)
 with mujoco.viewer.launch_passive(model, data) as viewer:
     for c in range(n_contact):
         ids.append(render_vector(viewer,
@@ -190,12 +192,28 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
     # J_rl_2 = np.zeros((3,model.nv))
     # J_rl_3 = np.zeros((3,model.nv))
     # J_rl_4 = np.zeros((3,model.nv))
+    delay = int(0.015*sim_frequency)
+    print('Delay: ',delay)
     while viewer.is_running():
         
         qpos = data.qpos.copy()
         qvel = data.qvel.copy()
         if counter % (sim_frequency / mpc_frequency) == 0 or counter == 0:
-
+            
+            if counter != 0:
+                for i in range(delay):
+                    qpos = data.qpos.copy()
+                    qvel = data.qvel.copy()
+                    # tau_fb = K@(x-np.concatenate([qpos,qvel]))
+                    if counter % (sim_frequency * dt) == 0 or counter == 0:
+                        tau = tau_val[high_freq_counter,:]
+                        high_freq_counter += 1
+                    tau_fb = -3*(qvel[6:6+n_joints])
+                    mpc_time += 1
+                    data.ctrl = tau + tau_fb
+                    mujoco.mj_step(model, data)
+                    counter += 1
+            start = timer()
             foot_op = np.array([data.geom_xpos[contact_id[i]] for i in range(n_contact)])
             foot_op_vec = foot_op.flatten()
             # mujoco.mj_jac(m = model, d = data,jacp = J_fl_1,jacr = None, point = foot_op_vec[:3],body = body_id[0])
@@ -212,7 +230,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             # g_dot = J.T @ qvel
             contact_op , timer_t_sim = mpc_utils.timer_run(duty_factor = duty_factor, step_freq = step_freq ,leg_time=timer_t_sim, dt=1/mpc_frequency)
             timer_t = timer_t_sim.copy()
-            ref_base_lin_vel = jnp.array([0.5,0,0])
+            ref_base_lin_vel = jnp.array([0.3,0,0])
             ref_base_ang_vel = jnp.array([0,0,0])
             
             x0 = jnp.concatenate([qpos, qvel,foot_op_vec])
@@ -225,7 +243,8 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             X.block_until_ready()
             stop = timer()
             print(f"Time elapsed: {stop-start}")
-            tau_val = U[:4,:n_joints]
+            mpc_time = 0
+            tau_val = U[:8,:n_joints]
             # grf = X[1,13+2*n_joints+n_contact*3:]
             grf = U[0,n_joints:]
             high_freq_counter = 0
@@ -280,6 +299,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
         if counter % (sim_frequency * dt) == 0 or counter == 0:
             tau = tau_val[high_freq_counter,:]
             high_freq_counter += 1
+        mpc_time += 1
         counter += 1        
         data.ctrl = tau - 3*qvel[6:6+n_joints]#+ 20*(p0[7:7+n_joints]-qpos[7:7+n_joints]) + 5*(- qvel[6:6+n_joints])
         # data.qpos = x_new[:7+n_joints]
