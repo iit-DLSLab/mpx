@@ -65,9 +65,9 @@ class BatchedMPCControllerWrapper:
         
         # Define cost, hessian approximation, and dynamics functions for MPC.
         cost = partial(mpc_objectives.quadruped_srbd_obj,
-                            config.W, config.n_contact, config.N)
+                            config.n_contact, config.N)
         hessian_approx = partial(mpc_objectives.quadruped_srbd_hessian_gn,
-                                      config.W, config.n_contact)
+                                    config.n_contact)
         dynamics = partial(mpc_dyn_model.quadruped_srbd_dynamics,
                                 config.mass, config.inertia, jnp.linalg.inv(config.inertia), config.dt)
 
@@ -129,9 +129,10 @@ class BatchedMPCControllerWrapper:
         
         # Execute the MPC optimization (work function).
        
-        X, U, V = self._solve(
+        X, U, V, _ = self._solve(
             reference,
             parameter,
+            jnp.tile(self.config.W, (self.n_env, 1, 1)),
             x0,
             self.batch_X0,
             self.batch_U0,

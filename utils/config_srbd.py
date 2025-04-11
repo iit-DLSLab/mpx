@@ -1,7 +1,9 @@
 import jax.numpy as jnp
 import jax 
-
-model_path = '/home/lamatucci/dls_ws_home/mpx/data/aliengo/aliengo.xml'  # Path to the MuJoCo model XML file
+import os 
+import sys 
+dir_path = os.path.dirname(os.path.realpath(__file__))
+model_path = os.path.abspath(os.path.join(dir_path, '..')) + '/data/aliengo/aliengo.xml'  # Path to the MuJoCo model XML file
 # Joint names and related configuration
 joints_name = [
     'FL_hip_joint', 'FL_thigh_joint', 'FL_calf_joint',

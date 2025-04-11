@@ -288,6 +288,8 @@ def work(reference,parameter,x0,X0,U0,V0):
     return optimizers.mpc(
         cost,
         dynamics,
+        None,
+        False,
         reference,
         parameter,
         x0,
