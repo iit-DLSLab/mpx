@@ -62,7 +62,7 @@ def reference_generator(N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input
     Ryaw = jnp.array([[jnp.cos(yaw), -jnp.sin(yaw), 0],[jnp.sin(yaw), jnp.cos(yaw), 0],[0, 0, 1]])
     dp_ref = jnp.tile(Ryaw@Rpitch@ref_lin_vel, (N+1, 1))
     foot_ref = jnp.tile(foot, (N+1, 1))
-    foot = jnp.tile(p,n_contact) + foot0@jax.scipy.linalg.block_diag(Ryaw,Ryaw,Ryaw,Ryaw).T
+    foot = jnp.tile(p, n_contact) + foot0 @ jax.scipy.linalg.block_diag(*([Ryaw] * n_contact)).T
     grf_ref = jnp.zeros((N+1, 3*n_contact))
     def foot_fn(t,carry):
 
