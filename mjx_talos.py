@@ -153,9 +153,10 @@ liftoff = p_legs0.copy()
 counter = 0
 high_freq_counter = 0
 mpc_time = 0
+use_terrain_estimator = False
 @jax.jit
 def jitted_reference_generator(foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
-    return mpc_utils.reference_generator(N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff)
+    return mpc_utils.reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff)
 ids = []
 tau = jnp.zeros(n_joints)
 with mujoco.viewer.launch_passive(model, data) as viewer:

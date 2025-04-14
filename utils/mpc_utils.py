@@ -33,8 +33,8 @@ def terrain_orientation(liftoff_pos):
 
     return jnp.roll(quat,1)
 
-@partial(jax.jit, static_argnums=(0,1,2,3))
-def reference_generator(N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
+@partial(jax.jit, static_argnums=(0,1,2,3,4))
+def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
     p = x[:3]
     quat = x[3:7]
     # q = x[7:7+n_joints]
@@ -50,8 +50,10 @@ def reference_generator(N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input
     p_ref_y = jnp.arange(N+1) * dt * ref_lin_vel[1] + p[1]
     p_ref_z = jnp.ones(N+1) * proprio_height
     p_ref = jnp.stack([p_ref_x, p_ref_y, p_ref_z], axis=1)
-    quat_ref = jnp.tile(terrain_orientation(liftoff), (N+1, 1))
-    # quat_ref = jnp.tile(jnp.array([1, 0, 0, 0]), (N+1, 1))
+    if use_terrain_estimator:
+        quat_ref = jnp.tile(terrain_orientation(liftoff), (N+1, 1))
+    else:
+        quat_ref = jnp.tile(jnp.array([1, 0, 0, 0]), (N+1, 1))
     q_ref = jnp.tile(q0, (N+1, 1))
 
     omega_ref = jnp.tile(ref_ang_vel, (N+1, 1))

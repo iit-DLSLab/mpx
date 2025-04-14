@@ -156,9 +156,10 @@ contact, timer_t = mpc_utils.timer_run(duty_factor = duty_factor, step_freq = st
 liftoff = p_legs0.copy()
 counter = 0
 high_freq_counter = 0
+use_terrain_estimator = False
 @jax.jit
 def jitted_reference_generator(foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
-    return mpc_utils.reference_generator(N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff)
+    return mpc_utils.reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff)
 ids = []
 jitted_dynamics = jax.jit(dynamics)
 data.qpos = x0[:7+n_joints]

@@ -87,3 +87,5 @@ Qleg  = jnp.diag(jnp.tile(jnp.concatenate([Qleg_x,Qleg_y,Qleg_z]),n_contact))  #
 
 # Combine all cost matrices into a block diagonal matrix
 W = jax.scipy.linalg.block_diag(Qp, Qrot, Qq, Qdp, Qomega, Qdq, Qleg, Qtau)
+
+use_terrain_estimation = True  # Flag to use terrain estimation

@@ -77,7 +77,7 @@ class BatchedMPCControllerWrapper:
         work = partial(optimizers.mpc, cost, dynamics, hessian_approx, False)
         
         reference_generator = partial(mpc_utils.reference_generator,
-            config.N, config.dt, config.n_joints, config.n_contact,
+            config.use_terrain_estimation, config.N, config.dt, config.n_joints, config.n_contact,
             duty_factor = config.duty_factor,  step_freq= config.step_freq ,step_height=config.step_height,foot0 = config.p_legs0, q0 = config.q0)
         
         timer_t = partial(mpc_utils.timer_run, duty_factor=config.duty_factor, step_freq=config.step_freq)
@@ -233,7 +233,7 @@ class MPCControllerWrapper:
         work = partial(optimizers.mpc, cost, dynamics, hessian_approx, False)
         
         reference_generator = partial(mpc_utils.reference_generator,
-            config.N, config.dt, config.n_joints, config.n_contact, foot0 = config.p_legs0, q0 = config.q0)
+            config.use_terrain_estimation ,config.N, config.dt, config.n_joints, config.n_contact, foot0 = config.p_legs0, q0 = config.q0)
         
         timer_t = partial(mpc_utils.timer_run, duty_factor=config.duty_factor, step_freq=config.step_freq)
 
