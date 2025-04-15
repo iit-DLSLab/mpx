@@ -14,6 +14,8 @@ import os
 import jax
 # jax.config.update('jax_platform_name', 'cpu')
 import jax.numpy as jnp
+gpu_device = jax.devices('gpu')[0]
+jax.default_device(gpu_device)
 jax.config.update("jax_compilation_cache_dir", "./jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
@@ -85,8 +87,8 @@ for name in body_name:
 p0 = np.array([0, 0, 1.01,
             1, 0, 0, 0,
             0.0, 0.006761,
-            0.25847, 0.173046, 0.0002,-0.525366,
-            -0.25847, -0.173046, -0.0002,-0.525366,
+            0.25847, 0.173046, 0.0002,-0.825366,
+            -0.25847, -0.173046, -0.0002,-0.825366,
             0, 0, -0.411354, 0.859395, -0.448041, -0.001708, 
             0, 0, -0.411354, 0.859395, -0.448041, -0.001708])
 x0 = jnp.concatenate([p0, jnp.zeros(6 + n_joints),p_legs0])
@@ -94,8 +96,8 @@ vel0 = jnp.zeros(6 + n_joints)
 u0 = jnp.zeros(m)
 Qp = jnp.diag(jnp.array([0, 0, 1e4]))
 Qq = jnp.diag(jnp.array([ 1e3, 1e3,
-                          1e1, 1e1, 1e1, 1e1,
-                          1e1, 1e1, 1e1, 1e1, 
+                          1e3, 1e3, 1e3, 1e3,
+                          1e3, 1e3, 1e3, 1e3,
                           1e0, 1e0, 1e0, 1e0, 1e0, 1e0,
                           1e0, 1e0, 1e0, 1e0, 1e0, 1e0
                           ])) 
@@ -157,15 +159,31 @@ use_terrain_estimator = False
 @jax.jit
 def jitted_reference_generator(foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
     return mpc_utils.reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff)
+
+
+## Arm reference
+arm_amp_ref = jnp.concatenate([
+    jnp.array([0.2, 0.3, 0.1, 0.8]),
+    jnp.array([0.2, 0.3, 0.1, 0.8])
+])
+arm_freq_ref = jnp.concatenate([
+    jnp.array([0.15, 0.2, 0.1, 0.25]),
+    jnp.array([0.15, 0.2, 0.1, 0.25])
+])
+arm_reference = True
+@jax.jit
+def jitted_reference_generator_arm(foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff, current_time, arm_amp_ref, arm_freq_ref):
+    return mpc_utils.reference_generator_arm(use_terrain_estimator,N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff, current_time, arm_amp_ref, arm_freq_ref)
+
 ids = []
 tau = jnp.zeros(n_joints)
 with mujoco.viewer.launch_passive(model, data) as viewer:
-    for c in range(n_contact):
-        ids.append(render_vector(viewer,
-              np.zeros(3),
-              np.zeros(3),
-              0.1,
-              np.array([1, 0, 0, 1])))
+    # for c in range(n_contact):
+    #     ids.append(render_vector(viewer,
+    #           np.zeros(3),
+    #           np.zeros(3),
+    #           0.1,
+    #           np.array([1, 0, 0, 1])))
     for c in range(n_contact):
         for k in range(N):
             ids.append(render_sphere(viewer,
@@ -193,7 +211,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
     # J_rl_2 = np.zeros((3,model.nv))
     # J_rl_3 = np.zeros((3,model.nv))
     # J_rl_4 = np.zeros((3,model.nv))
-    delay = int(0.015*sim_frequency)
+    delay = int(0.00*sim_frequency)
     print('Delay: ',delay)
     while viewer.is_running():
         
@@ -231,7 +249,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             # g_dot = J.T @ qvel
             contact_op , timer_t_sim = mpc_utils.timer_run(duty_factor = duty_factor, step_freq = step_freq ,leg_time=timer_t_sim, dt=1/mpc_frequency)
             timer_t = timer_t_sim.copy()
-            ref_base_lin_vel = jnp.array([0.3,0,0])
+            ref_base_lin_vel = jnp.array([-0.3,0.0,0])
             ref_base_ang_vel = jnp.array([0,0,0])
             
             x0 = jnp.concatenate([qpos, qvel,foot_op_vec])
@@ -239,7 +257,12 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                            ref_base_ang_vel[0],ref_base_ang_vel[1],ref_base_ang_vel[2],
                            1.0])
             start = timer()
-            reference , parameter , liftoff = jitted_reference_generator(p_legs0,p0[7:7+n_joints],timer_t, jnp.concatenate([qpos,qvel]), foot_op_vec, input, duty_factor = duty_factor,  step_freq= step_freq ,step_height=step_height,liftoff=liftoff)
+            if arm_reference:
+                current_time = counter / sim_frequency
+                reference , parameter , liftoff = jitted_reference_generator_arm(p_legs0,p0[7:7+n_joints],timer_t, jnp.concatenate([qpos,qvel]), foot_op_vec, input, duty_factor = duty_factor, step_freq=step_freq, step_height=step_height,liftoff=liftoff,
+                                                                             current_time=current_time, arm_amp_ref=arm_amp_ref, arm_freq_ref=arm_freq_ref)
+            else:
+                reference , parameter , liftoff = jitted_reference_generator(p_legs0,p0[7:7+n_joints],timer_t, jnp.concatenate([qpos,qvel]), foot_op_vec, input, duty_factor = duty_factor,  step_freq= step_freq ,step_height=step_height,liftoff=liftoff)
             X,U,V,_ =  work(reference,parameter,W,x0,X0,U0,V0)
             X.block_until_ready()
             stop = timer()
@@ -262,13 +285,13 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 X0 = jnp.concatenate([X[shift:],jnp.tile(X[-1:],(shift,1))])
                 V0 = jnp.concatenate([V[shift:],jnp.tile(V[-1:],(shift,1))])
             
-            for c in range(n_contact):
-                render_vector(viewer,
-                      grf[3*c:3*(c+1)],
-                      data.geom_xpos[contact_id[c]],
-                      np.linalg.norm(grf[3*c:3*(c+1)])/800,
-                      np.array([1, 0, 0, 1]),
-                      ids[c])
+            # for c in range(n_contact):
+            #     render_vector(viewer,
+            #           grf[3*c:3*(c+1)],
+            #           data.geom_xpos[contact_id[c]],
+            #           np.linalg.norm(grf[3*c:3*(c+1)])/800,
+            #           np.array([1, 0, 0, 1]),
+            #           ids[c])
             n_sphere = n_contact
             # tau = tau_val[0,:]
             # x0 = jnp.concatenate([qpos, qvel,foot_op_vec,np.zeros(3*n_contact)])
