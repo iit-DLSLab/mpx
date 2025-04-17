@@ -53,7 +53,7 @@ import pickle
 model = mujoco.MjModel.from_xml_path('./data/pal_talos/scene_motor.xml')
 data = mujoco.MjData(model)
 mpc_frequency = 50.0
-sim_frequency = 500.0
+sim_frequency = 1000.0
 model.opt.timestep = 1/sim_frequency
 contact_frame = ['foot_left_1','foot_left_2','foot_left_3','foot_left_4',
                 'foot_right_1','foot_right_2','foot_right_3','foot_right_4']
@@ -166,7 +166,7 @@ def jitted_reference_generator(foot0,q0,t_timer, x, foot, input, duty_factor, st
 total_counter = 0
 run_length_time = 10.0
 run_counter = 0
-n_runs = 1
+n_runs = 50
 dataset = {}
 env_id = 0
 run_id = -1
@@ -182,8 +182,7 @@ def reset(mj_model, mj_data, q_home, key):
     key, key_ang, key_lin, key_amp, key_freq, key_init = jax.random.split(key, 6)
 
     ## Resample Reference
-    # ref_base_lin_vel = jnp.array([-0.3,0.0,0])
-    ref_base_ang_vel_lim = 0.4
+    ref_base_ang_vel_lim = 0.1
     ref_base_ang_vel = jnp.array([0,
                                   0,
                                   jax.random.uniform(key_ang, shape=(), minval=-ref_base_ang_vel_lim, maxval=ref_base_ang_vel_lim)])
@@ -210,8 +209,8 @@ def reset(mj_model, mj_data, q_home, key):
 
     q_init = q_home
     q_rand = 0.1
-    q_torso_arm = jax.random.uniform(key_init, shape=(10,), minval=-q_rand, maxval=q_rand)
-    q_init[7:17] = q_init[7:17] + q_torso_arm
+    q_arm = jax.random.uniform(key_init, shape=(8,), minval=-q_rand, maxval=q_rand)
+    q_init[9:17] = q_init[9:17] + q_arm
 
     mujoco.mj_resetDataKeyframe(mj_model, mj_data, 0)
     mujoco.mj_forward(mj_model, mj_data)
@@ -300,7 +299,6 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             # print(f'ref_base_lin_vel\n{ref_base_lin_vel}')
             timer_t = jnp.array([0.5,0.5,0.5,0.5,0.0,0.0,0.0,0.0])
             timer_t_sim = timer_t.copy()
-            print(f'total_counter {total_counter}')
 
             ## Init MPC Data
             U0 = jnp.tile(u_ref, (N, 1))
@@ -318,7 +316,6 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             # Reset Run Dataset
             if nan_flag is False:
                 env_id_array = env_id*np.ones(run_dataset['q_full'].shape[0]) if run_id >= 0 else np.ones(1)
-                print(f'size dataset {env_id_array.shape}')
                 if run_id > 0:
                     dataset['env_id'].append(env_id_array)
                     for key in run_dataset.keys():
@@ -336,7 +333,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             
             run_dataset = init_run_dataset()
             full_label = 'env_' + str(env_id) + '_run_' + str(run_id)
-            print(f'run_name {full_label}')
+            print(f'Starting run: {full_label}')
             run_dataset['labels'] = full_label
 
             nan_flag = False
@@ -374,7 +371,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 reference , parameter , liftoff = jitted_reference_generator(p_legs0,p0[7:7+n_joints],timer_t, jnp.concatenate([qpos,qvel]), foot_op_vec, input, duty_factor = duty_factor,  step_freq= step_freq ,step_height=step_height,liftoff=liftoff)
             
             
-            X,U,V,_ =  work(reference,parameter,W,x0,X0,U0,V0)
+            X,U,V,K =  work(reference,parameter,W,x0,X0,U0,V0)
             X.block_until_ready()
             stop = timer()
             
@@ -406,17 +403,22 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
         counter += 1
         total_counter += 1
         data.ctrl = tau - 3*qvel[6:6+n_joints]#+ 20*(p0[7:7+n_joints]-qpos[7:7+n_joints]) + 5*(- qvel[6:6+n_joints])
+        # tau_fb = K[:n_joints,:13+2*n_joints] @ (X0[0,:13+2*n_joints] - np.concatenate([qpos,qvel]))
+        # data.ctrl = tau - tau_fb
 
         mujoco.mj_step(model, data)
         viewer.sync()
         
-    
-
 # Create folder and save dataset
 folder_name = 'datasets/talos/'
 os.makedirs(folder_name, exist_ok=True)
 
-filename = 'samples_' + str(total_counter) + '_data_freq_' + str(int(dataset_frequency)) + '_sim_time_' + str(int(run_length_time)) + '.pkl'
+# Add foot data
+dataset['duty_factor'] = duty_factor
+dataset['step_freq'] = step_freq
+dataset['step_height'] = step_height
+
+filename = 'samples_' + str(total_counter) + '_data_freq_' + str(int(dataset_frequency)) + '_sim_freq_' + str(int(sim_frequency)) + '_total_time_' + str(int(run_length_time)) + '_no_arm.pkl'
 with open(folder_name + filename, 'wb') as fp:
     pickle.dump(dataset, fp)
     print(f'Dictionary saved successfully to file {filename} | Nsamples {total_counter}')
