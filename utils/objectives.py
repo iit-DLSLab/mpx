@@ -2,15 +2,15 @@ import jax
 from jax import numpy as jnp
 from mujoco import mjx
 from mujoco.mjx._src import math
+from functools import partial
 
-def penaly(constraint):
+def penaly(constraint,alpha = 0.1,sigma = 5):
         def safe_log(x):
-            return jnp.where(x>0,jnp.log(x),1e6)
-        alpha = 0.1
-        sigma = 5
+            x = jnp.clip(x,1e-10,1e6)
+            return jnp.log(x)
         quadratic_barrier = alpha/2*(jnp.square((constraint-2*sigma)/sigma)-jnp.ones_like(constraint))
         log_barrier = -alpha*safe_log(constraint)
-        return jnp.clip(jnp.where(constraint>sigma,log_barrier,quadratic_barrier+log_barrier),0,1e6)
+        return jnp.clip(jnp.where(constraint>sigma,log_barrier,quadratic_barrier-alpha*jnp.log(sigma)),0,1e8)
 
 def quadruped_srbd_obj(n_contact,N,W,reference,x, u, t):
 
@@ -174,9 +174,10 @@ def quadruped_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
     J_friction_cone = jax.jacobian(friction_constraint)
     J_torque = jax.jacobian(torque_constraint)
     stand_up_flag = reference[t,-1]
+    hessian_penaly_torque = partial(hessian_penaly,alpha = 1,sigma = 1)
     # W = W.at[12+2*n_joints + 6:12+2*n_joints+3*n_contact,12+2*n_joints + 6:12+2*n_joints+3*n_contact].set(W[12+2*n_joints + 6:12+2*n_joints+3*n_contact,12+2*n_joints + 6:12+2*n_joints+3*n_contact]*stand_up_flag)
     H_penalty = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(friction_constraint(x)), -1e6, 1e6)*contact)
-    H_penalty_torque = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(torque_constraint(u)), -1e6, 1e6))
+    H_penalty_torque = jnp.diag(jnp.clip(jax.vmap(hessian_penaly_torque)(torque_constraint(u)), -1e6, 1e6))
     H_constraint = J_friction_cone(x).T@H_penalty@J_friction_cone(x)
     H_constraint_u = J_torque(u).T@H_penalty_torque@J_torque(u)
     return J_x(x,u).T@W@J_x(x,u) + H_constraint, J_u(x,u).T@W@J_u(x,u) + H_constraint_u, J_x(x,u).T@W@J_u(x,u)
