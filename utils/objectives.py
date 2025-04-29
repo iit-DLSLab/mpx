@@ -171,7 +171,6 @@ def quadruped_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
     hessian_penaly = jax.grad(jax.grad(penaly))
     J_friction_cone = jax.jacobian(friction_constraint)
     J_torque = jax.jacobian(torque_constraint)
-    stand_up_flag = reference[t,-1]
     hessian_penaly_torque = partial(hessian_penaly,alpha = 1,sigma = 1)
     # W = W.at[12+2*n_joints + 6:12+2*n_joints+3*n_contact,12+2*n_joints + 6:12+2*n_joints+3*n_contact].set(W[12+2*n_joints + 6:12+2*n_joints+3*n_contact,12+2*n_joints + 6:12+2*n_joints+3*n_contact]*stand_up_flag)
     H_penalty = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(friction_constraint(x)), -1e6, 1e6)*contact)

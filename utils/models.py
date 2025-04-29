@@ -204,22 +204,6 @@ def talos_wb_dynamics(model, mjx_model, contact_id, body_id, n_joints, dt, x, u,
     J_rl_4, _ = mjx.jac(mjx_model, mjx_data, right_foot_4, body_id[1])
     
     J = jnp.concatenate([J_fl_1,J_fl_2,J_fl_3,J_fl_4,J_rl_1,J_rl_2,J_rl_3,J_rl_4],axis=1)
-    # g_dot = J.T @ x[n_joints+7:13+2*n_joints]  # Velocity-level constraint violation
-    
-    # alpha = 5
-    # # beta = 2*jnp.sqrt(alpha)
-    # # Stabilization term
-    # baumgarte_term = - 2*alpha * g_dot #- beta * beta * g
-
-    # JT_M_invJ = J.T @ jax.scipy.linalg.cho_solve((M, False), J)
-
-
-    # rhs = -J.T @ jax.scipy.linalg.cho_solve((M, False),tau - D) + baumgarte_term 
-    # epsilon = 1e-3
-    # JT_M_invJ_reg = JT_M_invJ + epsilon * jnp.eye(JT_M_invJ.shape[0])
-    # cho_JT_M_invJ = jax.scipy.linalg.cho_factor(JT_M_invJ_reg)
-    
-    # grf = jax.scipy.linalg.cho_solve(cho_JT_M_invJ,rhs)
     grf = u[n_joints:]
     grf = jnp.concatenate([grf[0:3]*contact[0],grf[3:6]*contact[1],grf[6:9]*contact[2],grf[9:12]*contact[3],
                            grf[12:15]*contact[4],grf[15:18]*contact[5],grf[18:21]*contact[6],grf[21:24]*contact[7]])
@@ -233,24 +217,7 @@ def talos_wb_dynamics(model, mjx_model, contact_id, body_id, n_joints, dt, x, u,
     
     return x_next
 def quadruped_wb_dynamics_explicit_contact(model, mjx_model, contact_id, body_id, n_joints, dt, x, u, t, parameter):
-    """
-    Compute the whole-body dynamics of a quadruped robot using forward dynamics and contact forces.
 
-    Args:
-        model: The MuJoCo model object.
-        mjx_model: The MuJoCo XLA model object for the simulation.
-        contact_id (list): List of contact point IDs for each leg. [FL, FR, RL, RR]
-        body_id (list): List of body IDs for each leg. [FL, FR, RL, RR]
-        n_joints (int): Number of joints in the quadruped. 
-        dt (float): Time step for the simulation.
-        x (jnp.ndarray): Current state vector [position, orientation, joint positions, velocities].
-        u (jnp.ndarray): Control input vector (torques for the joints).
-        t (int): Current time step index.
-        parameter (jnp.ndarray): Contact parameters for each time step.
-
-    Returns:
-        jnp.ndarray: The updated state vector after applying dynamics and contact forces.
-    """
     # Create a new data object for the simulation
     mjx_data = mjx.make_data(model)
     # Update the position and velocity in the data object
@@ -318,5 +285,97 @@ def quadruped_wb_dynamics_explicit_contact(model, mjx_model, contact_id, body_id
     q = x[7:7+n_joints] + v[6:6+n_joints] * dt
     # Concatenate the updated state variables into a single vector
     x_next = jnp.concatenate([p, quat, q, v, current_leg, grf])
+
+    return x_next
+
+def quadruped_wb_dynamics_learned_contact_model(model, mjx_model, contact_id, body_id, n_joints, dt, x, u, t, parameter):
+    """
+    Compute the whole-body dynamics of a quadruped robot using forward dynamics and a learned contact model.
+
+    Args:
+        model: The MuJoCo model object.
+        mjx_model: The MuJoCo XLA model object for the simulation.
+        contact_id (list): List of contact point IDs for each leg. [FL, FR, RL, RR]
+        body_id (list): List of body IDs for each leg. [FL, FR, RL, RR]
+        n_joints (int): Number of joints in the quadruped. 
+        dt (float): Time step for the simulation.
+        x (jnp.ndarray): Current state vector [position, orientation, joint positions, velocities].
+        u (jnp.ndarray): Control input vector (torques for the joints).
+        t (int): Current time step index.
+        parameter (jnp.ndarray): Contact parameters for each time step and the learned contact model parameters.
+
+    Returns:
+        jnp.ndarray: The updated state vector after applying dynamics and contact forces.
+    """
+    # encoding = 64
+    input_size = 13 + 2*n_joints
+    hidden_layer_size_1 = 64
+    hidden_layer_size_2 = 128
+    output_size = 6 + n_joints
+
+    def NN(state):
+
+        W_h_1 = parameter[t,:hidden_layer_size_1*input_size].reshape(hidden_layer_size_1,input_size)
+        b_h_1 = parameter[t,hidden_layer_size_1*input_size:
+                          hidden_layer_size_1*input_size + hidden_layer_size_1]
+
+        hidden_state = W_h_1 @ state + b_h_1
+        
+        hidden_state = jax.nn.softplus(hidden_state)
+
+
+        W_h_2 = parameter[t,hidden_layer_size_1*input_size + hidden_layer_size_1 : 
+                          hidden_layer_size_1*input_size + hidden_layer_size_1 + hidden_layer_size_1*hidden_layer_size_2].reshape(hidden_layer_size_2,hidden_layer_size_1)
+        b_h_2 = parameter[t,hidden_layer_size_1*input_size + hidden_layer_size_1 + hidden_layer_size_1*hidden_layer_size_2:
+                          hidden_layer_size_1*input_size + hidden_layer_size_1 + hidden_layer_size_1*hidden_layer_size_2 + hidden_layer_size_2]
+
+        hidden_state_2 = W_h_2 @ hidden_state + b_h_2
+        
+        hidden_state_2 = jax.nn.softplus(hidden_state_2)
+
+        st_size = hidden_layer_size_1*input_size + hidden_layer_size_1 + hidden_layer_size_1*hidden_layer_size_2 + hidden_layer_size_2
+        W_output = parameter[t,st_size : 
+                             st_size + hidden_layer_size_2*output_size].reshape(output_size,hidden_layer_size_2)
+        b_output = parameter[t,st_size + hidden_layer_size_2*output_size:
+                             st_size + hidden_layer_size_2*output_size + output_size]
+
+        return W_output@hidden_state_2 + b_output
+    
+    # Create a new data object for the simulation
+    mjx_data = mjx.make_data(model)
+
+    # Update the position and velocity in the data object
+    mjx_data = mjx_data.replace(qpos=x[:n_joints+7], qvel=x[n_joints+7:2*n_joints+13])
+
+    # Perform forward kinematics and dynamics computations
+    mjx_data = mjx.fwd_position(mjx_model, mjx_data)
+    mjx_data = mjx.fwd_velocity(mjx_model, mjx_data)
+
+    # Extract the mass matrix and bias forces
+    M = mjx_data.qLD
+    D = mjx_data.qfrc_bias
+
+    # Create the torque vector, with zeros for the base and control inputs for the joints
+    tau = jnp.concatenate([jnp.zeros(6), u])
+
+    # Get the positions of the contact points on the legs
+    FL_leg = mjx_data.geom_xpos[contact_id[0]]
+    FR_leg = mjx_data.geom_xpos[contact_id[1]]
+    RL_leg = mjx_data.geom_xpos[contact_id[2]]
+    RR_leg = mjx_data.geom_xpos[contact_id[3]]
+
+    # Concatenate the positions of the legs into a single vector
+    current_leg = jnp.concatenate([FL_leg, FR_leg, RL_leg, RR_leg], axis=0)
+    st_size = hidden_layer_size_1*input_size + hidden_layer_size_1 + hidden_layer_size_1*hidden_layer_size_2 + hidden_layer_size_2 + output_size
+    # Update the velocity using the computed forces
+    v = x[n_joints+7:13+2*n_joints] + jax.scipy.linalg.cho_solve((M, False), tau - D + NN(jnp.concatenate([x[:13+2*n_joints]]))) * dt
+
+    # Perform semi-implicit Euler integration to update the position and orientation
+    p = x[:3] + v[:3] * dt
+    quat = math.quat_integrate(x[3:7], v[3:6], dt)
+    q = x[7:7+n_joints] + v[6:6+n_joints] * dt
+
+    # Concatenate the updated state variables into a single vector
+    x_next = jnp.concatenate([p, quat, q, v, current_leg])
 
     return x_next

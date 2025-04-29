@@ -1,4 +1,5 @@
 import jax
+from jax import jit
 import jax.numpy as jnp
 from functools import partial
 import numpy as np
@@ -43,9 +44,7 @@ class BatchedMPCControllerWrapper:
         self.config = config
         self.mpc_frequency = config.mpc_frequency
         self.shift = int(1 / (config.dt * config.mpc_frequency))
-        
         # Timer and liftoff states for the reference generator.
-        self.foot0 = config.p_legs0.copy()  # Initial foot positions (could be adjusted if needed)
         self.q0 = config.q0.copy()          # Initial joint configuration
         
         self.initial_state = jnp.concatenate([config.p0, config.quat0,config.q0, jnp.zeros(6+config.n_joints),config.p_legs0,jnp.zeros(3*config.n_contact)])
@@ -66,11 +65,11 @@ class BatchedMPCControllerWrapper:
         self.batch_V0 = jnp.tile(V0, (n_env, 1, 1))
         
         # Define cost, hessian approximation, and dynamics functions for MPC.
-        cost = partial(mpc_objectives.quadruped_wb_obj,
-                            config.W, config.p_legs0,config.n_joints, config.n_contact, config.N)
-        hessian_approx = partial(mpc_objectives.quadruped_wb_hessian_gn,
-                                      config.W,config.p_legs0, config.n_joints, config.n_contact)
-        dynamics = partial(mpc_dyn_model.quadruped_wb_dynamics,
+        cost = partial(config.cost,
+                            config.n_joints, config.n_contact, config.N)
+        hessian_approx = partial(config.hessian_approx,
+                            config.n_joints, config.n_contact)
+        dynamics = partial(config.dynamics,
                                 model, mjx_model, self.contact_id, self.body_id,
                                 config.n_joints, config.dt)
     
@@ -82,11 +81,10 @@ class BatchedMPCControllerWrapper:
         
         timer_t = partial(mpc_utils.timer_run, duty_factor=config.duty_factor, step_freq=config.step_freq)
 
-        self._solve = jax.vmap(work)
-        self._ref_gen = jax.vmap(reference_generator)
-        self._timer_run = jax.vmap(mpc_utils.timer_run, in_axes=(None,None,0, None))
+        self._solve = jax.jit(jax.vmap(work, in_axes = (0,0,None,0,0,0,0)))
+        self._ref_gen = jax.jit(jax.vmap(reference_generator))
+        self._timer_run = jax.jit(jax.vmap(mpc_utils.timer_run, in_axes=(None,None,0, None)))
         
-
         self.contact_time = jnp.tile(config.timer_t, (n_env, 1))
         self.liftoff = jnp.zeros((n_env, 3*config.n_contact))
 
@@ -119,6 +117,7 @@ class BatchedMPCControllerWrapper:
         X, U, V = self._solve(
             reference,
             parameter,
+            self.config.W,
             x0,
             self.batch_X0,
             self.batch_U0,
@@ -138,35 +137,12 @@ class BatchedMPCControllerWrapper:
         input = jax_dlpack.from_dlpack(input_torch)
         foot_op = jax_dlpack.from_dlpack(foot_op_torch)
 
-        # Update the timer state for the gait reference.
-        _ , self.contact_time = self._timer_run(self.config.duty_factor,self.config.step_freq,self.contact_time,1/self.mpc_frequency)
-        
-        # Generate reference trajectory and additional MPC parameters.
-        reference, parameter, self.liftoff = self._ref_gen(
-            t_timer = self.contact_time.copy(),
-            x = x0,
-            foot = foot_op,
-            input = input,
-            liftoff = self.liftoff,
-        )
-        # Execute the MPC optimization (work function).
-        X, U, V,_ = self._solve(
-            reference,
-            parameter,
-            x0,
-            self.batch_X0,
-            self.batch_U0,
-            self.batch_V0
-            )
-        
-        # Warm-start for the next call: shift trajectories forward.
-        self.batch_X0 = jnp.concatenate([X[:,self.shift:,:], jnp.tile(X[:,-1:,:], (self.shift, 1))],axis = 1)
-        self.batch_U0 = jnp.concatenate([U[:,self.shift:,:], jnp.tile(U[:,-1:,:], (self.shift, 1))],axis = 1)
-        self.batch_V0 = jnp.concatenate([V[:,self.shift:,:], jnp.tile(V[:,-1:,:], (self.shift, 1))],axis = 1)
+        X, U, _ = self.run(x0, input, foot_op)
 
         tau = torch_dlpack.from_dlpack(U[:,0,:self.config.n_joints])
         q = torch_dlpack.from_dlpack(X[:,1,7:self.config.n_joints+7])
         dq = torch_dlpack.from_dlpack(X[:,1,13+self.config.n_joints:2*self.config.n_joints+13])
+
         return tau , q, dq
     
     def reset(self,envs):
@@ -185,7 +161,7 @@ class BatchedMPCControllerWrapper:
         self.batch_V0 = self.batch_V0.at[envs,:,:].set(jnp.tile(V0, (n_env_reset, 1, 1)))
         print("MPC Controller Reset")
         return
-
+    
 class MPCControllerWrapper:
     def __init__(self, config):
         """
@@ -224,9 +200,9 @@ class MPCControllerWrapper:
         self.V0 = jnp.zeros((config.N + 1, config.n))
         
         # Define cost, hessian approximation, and dynamics functions for MPC.
-        cost = partial(mpc_objectives.quadruped_wb_obj,config.n_joints, config.n_contact, config.N)
-        hessian_approx = partial(mpc_objectives.quadruped_wb_hessian_gn,config.n_joints, config.n_contact)
-        dynamics = partial(mpc_dyn_model.quadruped_wb_dynamics,
+        cost = partial(config.cost,config.n_joints, config.n_contact, config.N)
+        hessian_approx = partial(config.hessian_approx,config.n_joints, config.n_contact)
+        dynamics = partial(config.dynamics,
                                 self.model, mjx_model, self.contact_id, self.body_id,
                                 config.n_joints, config.dt)
     
@@ -305,12 +281,6 @@ class MPCControllerWrapper:
         input[6] = self.robot_height
         x0 = jnp.concatenate([qpos, qvel,foot_op.flatten(),jnp.zeros(3*self.config.n_contact)])
         input = jnp.array(input)
-
-
-
-        # start = timer()
-       
-        # start = timer()
         # Update the timer state for the gait reference.
         _ , self.contact_time = self._timer_run(self.duty_factor,self.step_freq,self.contact_time,1/self.mpc_frequency)
         # Generate reference trajectory and additional MPC parameters.
@@ -324,8 +294,9 @@ class MPCControllerWrapper:
             input = input,
             liftoff = self.liftoff,
         )
-        # Execute the MPC optimization (work function).
-        X, U, V, _ = self._solve(
+        
+        # Execute the MPC optimization.
+        X, U, V = self._solve(
             reference,
             parameter,
             self.config.W,

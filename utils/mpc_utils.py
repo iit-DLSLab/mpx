@@ -64,7 +64,7 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,foot0,q0,t
     Ryaw = jnp.array([[jnp.cos(yaw), -jnp.sin(yaw), 0],[jnp.sin(yaw), jnp.cos(yaw), 0],[0, 0, 1]])
     dp_ref = jnp.tile(Ryaw@Rpitch@ref_lin_vel, (N+1, 1))
     foot_ref = jnp.tile(foot, (N+1, 1))
-    foot = jnp.tile(p, n_contact) + foot0 @ jax.scipy.linalg.block_diag(*([Ryaw] * n_contact)).T
+    hip = jnp.tile(p, n_contact) + foot0 @ jax.scipy.linalg.block_diag(*([Ryaw] * n_contact)).T
     grf_ref = jnp.zeros((N+1, 3*n_contact))
     def foot_fn(t,carry):
 
@@ -86,7 +86,7 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,foot0,q0,t
         def calc_foothold(direction):
             f1 = 0.5*ref_lin_vel[direction]*duty_factor/step_freq
             f2 = jnp.sqrt(proprio_height/9.81)*(dp[direction]-ref_lin_vel[direction])
-            f = f1 + f2 + foot[direction::3]
+            f = f1 + f2 + hip[direction::3]
             return f
 
         foothold_x = calc_foothold(0)
@@ -113,7 +113,7 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,foot0,q0,t
         new_foot = new_foot.at[t,1::3].set(new_foot_y)
         new_foot = new_foot.at[t,2::3].set(new_foot_z)
 
-        grf_new = grf_new.at[t,2::3].set((new_contact_sequence*500/jnp.sum(new_contact_sequence)))
+        grf_new = grf_new.at[t,2::3].set((new_contact_sequence*850/jnp.sum(new_contact_sequence)))
 
         return (timer_seq, contact_sequence,new_foot,liftoff_x,liftoff_y,liftoff_z,grf_new)
 
@@ -128,7 +128,7 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,foot0,q0,t
     liftoff = liftoff.at[1::3].set(liftoff_y)
     liftoff = liftoff.at[2::3].set(liftoff_z)
 
-    return jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref, foot_ref, contact_sequence,grf_ref,jnp.tile(jnp.array([duty_factor,step_freq]),(N+1, 1))], axis=1),jnp.concatenate([ contact_sequence,foot_ref], axis=1), liftoff
+    return jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref, foot_ref, contact_sequence,grf_ref], axis=1),jnp.concatenate([contact_sequence], axis=1), liftoff
 
 @partial(jax.jit, static_argnums=(0,1,2))
 def reference_generator_srbd(N,dt,n_contact,foot0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):

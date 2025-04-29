@@ -1,6 +1,8 @@
 import jax.numpy as jnp
 import jax 
-
+import utils.mpc_utils as mpc_utils
+import utils.models as mpc_dyn_model
+import utils.objectives as mpc_objectives
 import os 
 import sys 
 dir_path = os.path.dirname(os.path.realpath(__file__))
@@ -41,10 +43,10 @@ q0_init = jnp.array([-0.2, 0.8, -1.8, -0.2, 0.8, -1.8, -0.2, 0.8, -1.8, -0.2, 0.
 
 #alingo
 p_legs0 = jnp.array([
-    0.27092872, 0.174, -0.31,  # Initial position of the front left leg
-    0.27092872, -0.174, -0.31, # Initial position of the front right leg
-   -0.20887128, 0.174, -0.31,  # Initial position of the rear left leg
-   -0.20887128, -0.174  , -0.31   # Initial position of the rear right leg
+    0.27092872, 0.174, .0,  # Initial position of the front left leg
+    0.27092872, -0.174, .0, # Initial position of the front right leg
+   -0.20887128, 0.174, .0,  # Initial position of the rear left leg
+   -0.20887128, -0.174  , .0   # Initial position of the rear right leg
 ])
 #go2
 # p_legs0 = jnp.array([
@@ -89,3 +91,7 @@ Qleg  = jnp.diag(jnp.tile(jnp.concatenate([Qleg_x,Qleg_y,Qleg_z]),n_contact))  #
 W = jax.scipy.linalg.block_diag(Qp, Qrot, Qq, Qdp, Qomega, Qdq, Qleg, Qtau)
 
 use_terrain_estimation = True  # Flag to use terrain estimation
+
+cost = mpc_objectives.quadruped_wb_obj
+hessian_approx = mpc_objectives.quadruped_wb_hessian_gn
+dynamics = mpc_dyn_model.quadruped_wb_dynamics
