@@ -48,10 +48,10 @@ p_legs0 = jnp.array([
 ])
 #go2
 # p_legs0 = jnp.array([
-#     0.192, 0.142, 0.024,  # Initial position of the front left leg
-#     0.192, -0.142, 0.024, # Initial position of the front right leg
-#    -0.195, 0.142, 0.024,  # Initial position of the rear left leg
-#    -0.195, -0.142, 0.024  # Initial position of the rear right leg
+#     0.192, 0.142, -0.27,  # Initial position of the front left leg
+#     0.192, -0.142, -0.27, # Initial position of the front right leg
+#    -0.195, 0.142, -0.27,  # Initial position of the rear left leg
+#    -0.195, -0.142, -0.27  # Initial position of the rear right leg
 # ])
 
 # Determine number of joints and contacts from the lists
