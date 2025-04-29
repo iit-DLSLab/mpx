@@ -182,12 +182,12 @@ def reset(mj_model, mj_data, q_home, key):
     key, key_ang, key_lin, key_amp, key_freq, key_init = jax.random.split(key, 6)
 
     ## Resample Reference
-    ref_base_ang_vel_lim = 0.1
+    ref_base_ang_vel_lim = 0.0
     ref_base_ang_vel = jnp.array([0,
                                   0,
                                   jax.random.uniform(key_ang, shape=(), minval=-ref_base_ang_vel_lim, maxval=ref_base_ang_vel_lim)])
 
-    ref_base_lin_vel_lim = jnp.array([0.3, 0.05, 0])
+    ref_base_lin_vel_lim = jnp.array([0.3, 0.0, 0])
     ref_base_lin_vel = jax.random.uniform(key_lin, shape=(3,), minval=-ref_base_lin_vel_lim, maxval=ref_base_lin_vel_lim)
 
     ## Arm reference
@@ -211,6 +211,7 @@ def reset(mj_model, mj_data, q_home, key):
     q_rand = 0.1
     q_arm = jax.random.uniform(key_init, shape=(8,), minval=-q_rand, maxval=q_rand)
     q_init[9:17] = q_init[9:17] + q_arm
+    print(q_home)
 
     mujoco.mj_resetDataKeyframe(mj_model, mj_data, 0)
     mujoco.mj_forward(mj_model, mj_data)
@@ -274,7 +275,7 @@ def add_sim_data_to_dataset(dataset, time, mj_data, mj_model):
 
     # Labels and, env_id
 
-    return dataset
+    return dataset, tau_mj_real
 
 
 ids = []
@@ -345,7 +346,12 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
         qvel = data.qvel.copy()
         current_time = counter / sim_frequency
         if counter % (sim_frequency / dataset_frequency) == 0:
-            run_dataset = add_sim_data_to_dataset(run_dataset, current_time, data, model)
+            run_dataset, tau_mj_real = add_sim_data_to_dataset(run_dataset, current_time, data, model)
+
+            if (np.any(np.abs(tau_mj_real[3:5]) > 800) or np.any(np.abs(qvel[3:5]) > 1.7)) and current_time > 0.5:
+                print(tau_mj_real[3:5])
+                print(qvel[3:5])
+                nan_flag = True
 
         if counter % (sim_frequency / mpc_frequency) == 0 or counter == 0:
 
