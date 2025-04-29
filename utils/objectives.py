@@ -2,15 +2,15 @@ import jax
 from jax import numpy as jnp
 from mujoco import mjx
 from mujoco.mjx._src import math
+from functools import partial
 
-def penaly(constraint):
+def penaly(constraint,alpha = 0.1,sigma = 5):
         def safe_log(x):
-            return jnp.where(x>0,jnp.log(x),1e6)
-        alpha = 0.1
-        sigma = 5
+            x = jnp.clip(x,1e-10,1e6)
+            return jnp.log(x)
         quadratic_barrier = alpha/2*(jnp.square((constraint-2*sigma)/sigma)-jnp.ones_like(constraint))
         log_barrier = -alpha*safe_log(constraint)
-        return jnp.clip(jnp.where(constraint>sigma,log_barrier,quadratic_barrier+log_barrier),0,1e6)
+        return jnp.clip(jnp.where(constraint>sigma,log_barrier,quadratic_barrier-alpha*jnp.log(sigma)),0,1e8)
 
 def quadruped_srbd_obj(n_contact,N,W,reference,x, u, t):
 
@@ -101,15 +101,12 @@ def quadruped_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
         44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44 ])
     torque_limits = jnp.kron(jnp.eye(n_joints),(jnp.array([-1,1]))).T@tau+torque_limits + jnp.ones_like(torque_limits)*1e-2
     contact = reference[t,13+n_joints+3*n_contact:13+n_joints+4*n_contact]
-    # flag_inital_phase_swing = jnp.where(timer_leg < (duty_factor + 0.2*(1-duty_factor)), 0, 1)
+    # contact_map = jnp.array([0,0,contact[0],0,0,contact[1],0,0,contact[2],0,0,contact[3]])
     stage_cost = (p - p_ref).T @ W[:3,:3] @ (p - p_ref) + math.quat_sub(quat,quat_ref).T@W[3:6,3:6]@math.quat_sub(quat,quat_ref) + (q - q_ref).T @ W[6:6+n_joints,6:6+n_joints] @ (q - q_ref) +\
                  (dp - dp_ref).T @ W[6+n_joints:9+n_joints,6+n_joints:9+n_joints] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9+n_joints:12+n_joints,9+n_joints:12+n_joints] @ (omega - omega_ref) + dq.T @ W[12+n_joints:12+2*n_joints,12+n_joints:12+2*n_joints] @ dq +\
-                 (p_leg[:6] - p_leg_ref[:6]).T @W[12+2*n_joints:12+2*n_joints+6,12+2*n_joints:12+2*n_joints+6]@ (p_leg[:6] - p_leg_ref[:6])+ \
-                 (p_leg[6:] - p_leg_ref[6:]).T @W[12+2*n_joints:12+2*n_joints+6,12+2*n_joints:12+2*n_joints+6]@ (p_leg[6:] - p_leg_ref[6:])+ \
+                 ((p_leg - p_leg_ref)).T @W[12+2*n_joints:12+2*n_joints+3*n_contact,12+2*n_joints:12+2*n_joints+3*n_contact]@ ((p_leg - p_leg_ref))+ \
                  tau.T @ W[12+2*n_joints+3*n_contact:12+3*n_joints+3*n_contact,12+2*n_joints+3*n_contact:12+3*n_joints+3*n_contact] @ tau +\
-                 jnp.sum(friction_cone*contact) + jnp.sum(penaly(torque_limits))
-                #  (foot_speed[::3]*flag_inital_phase_swing).T@(foot_speed[::3]*flag_inital_phase_swing)*1e1 + (foot_speed[2::3]*flag_inital_phase_swing).T@(foot_speed[2::3]*flag_inital_phase_swing)*1e1#+ jnp.sum(friction_cone)
-                  #+ jnp.sum(friction_cone)
+                 jnp.sum(friction_cone*contact) + jnp.sum(penaly(torque_limits,1,1))
     term_cost = (p - p_ref).T @ W[:3,:3] @ (p - p_ref) + math.quat_sub(quat,quat_ref).T@W[3:6,3:6]@math.quat_sub(quat,quat_ref) + (q - q_ref).T @ W[6:6+n_joints,6:6+n_joints] @ (q - q_ref) +\
                  (dp - dp_ref).T @ W[6+n_joints:9+n_joints,6+n_joints:9+n_joints] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9+n_joints:12+n_joints,9+n_joints:12+n_joints] @ (omega - omega_ref) + dq.T @ W[12+n_joints:12+2*n_joints,12+n_joints:12+2*n_joints] @ dq
 
@@ -146,13 +143,14 @@ def quadruped_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
         #         # f2 = jnp.sqrt(0.27/9.81)*(dp[direction]-dp_ref[direction])
         #         f = f1 + foot[direction::3]
         #         return f
+        # contact_map = jnp.array([0,0,contact[0],0,0,contact[1],0,0,contact[2],0,0,contact[3]])
         p_res = (p - p_ref).T
         quat_res = math.quat_sub(quat,quat_ref).T
         q_res = (q - q_ref).T
         dp_res = (dp - dp_ref).T
         omega_res = (omega - omega_ref).T
         dq_res = dq.T
-        p_leg_res = (p_leg - p_leg_ref).T
+        p_leg_res = ((p_leg - p_leg_ref)).T
         tau_res = tau.T
         # foot_speed_res_x = foot_speed[::3].T*flag_inital_phase_swing
         # foot_speed_res_y = foot_speed[1::3].T*flag_inital_phase_swing
@@ -174,9 +172,10 @@ def quadruped_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
     J_friction_cone = jax.jacobian(friction_constraint)
     J_torque = jax.jacobian(torque_constraint)
     stand_up_flag = reference[t,-1]
+    hessian_penaly_torque = partial(hessian_penaly,alpha = 1,sigma = 1)
     # W = W.at[12+2*n_joints + 6:12+2*n_joints+3*n_contact,12+2*n_joints + 6:12+2*n_joints+3*n_contact].set(W[12+2*n_joints + 6:12+2*n_joints+3*n_contact,12+2*n_joints + 6:12+2*n_joints+3*n_contact]*stand_up_flag)
     H_penalty = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(friction_constraint(x)), -1e6, 1e6)*contact)
-    H_penalty_torque = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(torque_constraint(u)), -1e6, 1e6))
+    H_penalty_torque = jnp.diag(jnp.clip(jax.vmap(hessian_penaly_torque)(torque_constraint(u)), -1e6, 1e6))
     H_constraint = J_friction_cone(x).T@H_penalty@J_friction_cone(x)
     H_constraint_u = J_torque(u).T@H_penalty_torque@J_torque(u)
     return J_x(x,u).T@W@J_x(x,u) + H_constraint, J_u(x,u).T@W@J_u(x,u) + H_constraint_u, J_x(x,u).T@W@J_u(x,u)
