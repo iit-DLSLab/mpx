@@ -106,7 +106,7 @@ Qq = jnp.diag(jnp.array([ 1e3, 1e3,
 Qdp = jnp.diag(jnp.array([1, 1, 1]))*1e3
 Qomega = jnp.diag(jnp.array([1, 1, 1]))*1e2
 Qdq = jnp.diag(jnp.ones(n_joints)) * 1e0
-Qrot = jnp.diag(jnp.array([1,1,1]))*1e3
+Qrot = jnp.diag(jnp.array([1,1,0]))*1e3
 Qtau = jnp.diag(jnp.ones(n_joints)) * 1e-2
 Qleg = jnp.diag(jnp.tile(jnp.array([1e5,1e5,1e5]),n_contact))
 Qgrf = jnp.diag(jnp.ones(3*n_contact))*1e-3
@@ -182,12 +182,12 @@ def reset(mj_model, mj_data, q_home, key):
     key, key_ang, key_lin, key_amp, key_freq, key_init = jax.random.split(key, 6)
 
     ## Resample Reference
-    ref_base_ang_vel_lim = 0.0
+    ref_base_ang_vel_lim = 0.4
     ref_base_ang_vel = jnp.array([0,
                                   0,
                                   jax.random.uniform(key_ang, shape=(), minval=-ref_base_ang_vel_lim, maxval=ref_base_ang_vel_lim)])
 
-    ref_base_lin_vel_lim = jnp.array([0.3, 0.0, 0])
+    ref_base_lin_vel_lim = jnp.array([0.3, 0.05, 0])
     ref_base_lin_vel = jax.random.uniform(key_lin, shape=(3,), minval=-ref_base_lin_vel_lim, maxval=ref_base_lin_vel_lim)
 
     ## Arm reference
@@ -207,11 +207,11 @@ def reset(mj_model, mj_data, q_home, key):
 
     ref_param = (ref_base_lin_vel, ref_base_ang_vel, arm_amp_ref, arm_freq_ref)
 
-    q_init = q_home
+    q_init = jnp.array(q_home)
     q_rand = 0.1
     q_arm = jax.random.uniform(key_init, shape=(8,), minval=-q_rand, maxval=q_rand)
-    q_init[9:17] = q_init[9:17] + q_arm
-    print(q_home)
+    q_init = q_init.at[9:17].add(q_arm)
+    print(f'q_init\n {q_init}')
 
     mujoco.mj_resetDataKeyframe(mj_model, mj_data, 0)
     mujoco.mj_forward(mj_model, mj_data)
@@ -220,7 +220,7 @@ def reset(mj_model, mj_data, q_home, key):
     mujoco.mj_forward(mj_model, mj_data)
     mujoco.mj_step(mj_model, mj_data)
 
-    print(ref_param)
+    print(f'ref_param\n {ref_param}')
     
     return mj_model, mj_data, q_init, ref_param, key
 
@@ -424,7 +424,8 @@ dataset['duty_factor'] = duty_factor
 dataset['step_freq'] = step_freq
 dataset['step_height'] = step_height
 
-filename = 'samples_' + str(total_counter) + '_data_freq_' + str(int(dataset_frequency)) + '_sim_freq_' + str(int(sim_frequency)) + '_total_time_' + str(int(run_length_time)) + '_no_arm.pkl'
+Nsamples = int(n_runs * run_length_time * sim_frequency)
+filename = 'samples_' + str(Nsamples) + '_n_runs_' + str(n_runs) + '_data_freq_' + str(int(dataset_frequency)) + '_sim_freq_' + str(int(sim_frequency)) + '_total_time_' + str(int(run_length_time)) + '_base_full_arm.pkl'
 with open(folder_name + filename, 'wb') as fp:
     pickle.dump(dataset, fp)
     print(f'Dictionary saved successfully to file {filename} | Nsamples {total_counter}')
