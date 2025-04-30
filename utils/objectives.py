@@ -179,7 +179,7 @@ def quadruped_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
     H_constraint_u = J_torque(u).T@H_penalty_torque@J_torque(u)
     return J_x(x,u).T@W@J_x(x,u) + H_constraint, J_u(x,u).T@W@J_u(x,u) + H_constraint_u, J_x(x,u).T@W@J_u(x,u)
 
-def humanoid_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
+def h1_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
 
     p = x[:3]
     quat = x[3:7]
@@ -227,7 +227,7 @@ def humanoid_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
 
     return jnp.where(t == N, 0.5 * term_cost, 0.5 * stage_cost)
 
-def humanoid_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
+def h1_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
 
     
     def residual(x,u):

@@ -8,7 +8,7 @@ sys.path.append(os.path.abspath(os.path.join(dir_path, '..')))
 import utils.mpc_utils as mpc_utils
 import utils.models as mpc_dyn_model
 import utils.objectives as mpc_objectives
-import utils.config_srbd as config
+import config.config_srbd as config
 import mujoco 
 from mujoco import mjx
 import primal_dual_ilqr.primal_dual_ilqr.optimizers as optimizers

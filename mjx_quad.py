@@ -1,12 +1,4 @@
-import os
- 
-# Set environment variables for XLA flags
-#os.environ['XLA_FLAGS'] = (
-#    '--xla_gpu_enable_triton_softmax_fusion=true '
-#    '--xla_gpu_triton_gemm_any=true '
-    # '--xla_gpu_deterministic_ops=true'
-#)
- 
+import os 
 import jax.numpy as jnp
 import jax
 import mujoco
@@ -24,7 +16,7 @@ import copy
 from gym_quadruped.utils.mujoco.visual import render_sphere, render_vector
  
 import utils.mpc_wrapper as mpc_wrapper
-import utils.config as config
+import config.config_quadruped as config
 
 from timeit import default_timer as timer
 # Set GPU device for JAX
@@ -53,7 +45,6 @@ env = QuadrupedEnv(robot=robot_name,
                    state_obs_names=state_observables_names,  # Desired quantities in the 'state'
                    )
 obs = env.reset(random=False)
-n_env = 2
 # Define the MPC wrapper
 mpc = mpc_wrapper.MPCControllerWrapper(config)
 env.mjData.qpos = jnp.concatenate([config.p0, config.quat0,config.q0])
@@ -69,7 +60,7 @@ counter = 0
 # Main simulation loop
 tau = jnp.zeros(config.n_joints)
 tau_old = jnp.zeros(config.n_joints)
-delay = int(0.015*sim_frequency)
+delay = int(0.0*sim_frequency)
 print('Delay: ',delay)
 q = config.q0.copy()
 dq = jnp.zeros(config.n_joints)
@@ -98,16 +89,13 @@ while env.viewer.is_running():
                 # tau_fb = K@(x-np.concatenate([qpos,qvel]))
 
                 tau_fb = -3*(qvel[6:6+config.n_joints])
-                mpc_time += 1
                 state, reward, is_terminated, is_truncated, info = env.step(action=tau + tau_fb)
                 counter += 1
         start = timer()
-        tau_old = tau
         tau, q, dq = mpc.run(qpos,qvel,input)   
         stop = timer()
         print("Time taken for MPC: ", stop-start)   
 
-        mpc_time = 0
         stop = timer()
 
         # tau = U[0,:config.n_joints]
@@ -136,24 +124,12 @@ while env.viewer.is_running():
         #               ids[c])
         # tau_val = U[:4,:config.n_joints]
         # high_freq_counter = 0
-        # if jnp.any(jnp.isnan(tau_val)):
-        #     print('Nan detected')
-        #     U0 = jnp.tile(config.u_ref, (config.N, 1))
-        #     X0 = jnp.tile(x0, (config.N + 1, 1))
-        #     V0 = jnp.zeros((config.N + 1, config.n ))
-        # else:
-        #     shift = int(1/(config.dt*mpc_frequency))
-        #     U0 = jnp.concatenate([U[shift:],jnp.tile(U[-1:],(shift,1))])
-        #     X0 = jnp.concatenate([X[shift:],jnp.tile(X[-1:],(shift,1))])
-        #     V0 = jnp.concatenate([V[shift:],jnp.tile(V[-1:],(shift,1))])
         
     # if counter % (sim_frequency * config.dt) == 0 or counter == 0:
     #         tau = tau_val[high_freq_counter,:]
     #         high_freq_counter += 1
 
     tau_fb = -3*(qvel[6:6+config.n_joints])
-    # tau_fb = K@(x-np.concatenate([qpos,qvel]))
-    mpc_time += 1
     state, reward, is_terminated, is_truncated, info = env.step(action= tau + tau_fb)
     # mujoco.mj_step(env.mjModel, env.mjData)
     counter += 1

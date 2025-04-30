@@ -1,7 +1,7 @@
 <mujoco model="aliengo_description">
     <compiler angle="radian" meshdir="./assets/" />
-    <option cone="elliptic" impratio="100" />
-    <size njmax="500" nconmax="100" />
+    <!-- <option cone="elliptic" impratio="100" />
+    <size njmax="500" nconmax="100" /> -->
     <option gravity='0 0 -9.806' timestep='0.002'/>
 
     <default>
@@ -51,7 +51,7 @@
             
             <!-- trunk visual mesh and collision -->
             <geom type="mesh" class="visual" rgba="0.2 0.2 0.2 1" mesh="trunk"/>
-            <geom type="box" class="collision" size="0.18 0.075 0.056"/>
+            <!-- <geom type="box" class="collision" size="0.18 0.075 0.056"/> -->
 
             <!-- modify this to add payload -->
             <!--body name="payload" pos="0 0 0">
@@ -69,7 +69,7 @@
                 
                 <!-- FL_hip visual mesh and collision -->
                 <geom type="mesh" class="visual" rgba="0.2 0.2 0.2 1" mesh="hip"/>
-                <geom type="capsule" class="collision" size="0.046 0.0209" pos="0 0.083 0" quat="0.707107 0.707107 0 0"/>
+                <!-- <geom type="capsule" class="collision" size="0.046 0.0209" pos="0 0.083 0" quat="0.707107 0.707107 0 0"/> -->
                 
                 <body name="FL_thigh" pos="0 0.083 0">
                     <inertial pos="-0.005607 -0.003877 -0.048199" quat="0.717987 -0.031246 -0.0335669 0.694544" mass="0.639" diaginertia="0.0058474 0.00571186 0.000324584" />
@@ -77,7 +77,7 @@
                     
                     <!-- FL_thigh visual mesh and collision -->
                     <geom type="mesh" class="visual" rgba="0.2 0.2 0.2 1" mesh="thigh"/>
-                    <geom type="box" class="collision" size="0.125 0.0187 0.0215" pos="0 0 -0.125" quat="0.707107 0 0.707107 0"/>
+                    <!-- <geom type="box" class="collision" size="0.125 0.0187 0.0215" pos="0 0 -0.125" quat="0.707107 0 0.707107 0"/> -->
                     
                     <body name="FL_calf" pos="0 0 -0.25">
                         <inertial pos="0.00215606 4.88427e-05 -0.166671" quat="0.707462 0.00517582 0.00535172 0.706712" mass="0.267" diaginertia="0.00690975 0.00689712 5.4885e-05" />
@@ -85,7 +85,7 @@
                         
                         <!-- FL_calf visual mesh and collision -->
                         <geom type="mesh" class="visual" rgba="0 0 0 1" mesh="calf" />
-                        <geom type="box" class="collision" size="0.125 0.0104 0.008" pos="0 0 -0.125" quat="0.707107 0 0.707107 0"/>
+                        <!-- <geom type="box" class="collision" size="0.125 0.0104 0.008" pos="0 0 -0.125" quat="0.707107 0 0.707107 0"/> -->
                         
                         <!-- FL_foot only collision -->
                         <geom name="FL" class="collision" size="0.0265" pos="0 0 -0.25" />
@@ -100,7 +100,7 @@
                 
                 <!-- FR_hip visual mesh and collision -->
                 <geom type="mesh" mesh="hip" class="visual" quat="0 1 0 0" rgba="0.2 0.2 0.2 1"/>
-                <geom type="capsule" class="collision" size="0.046 0.0209" pos="0 -0.083 0" quat="0.707107 0.707107 0 0"/>
+                <!-- <geom type="capsule" class="collision" size="0.046 0.0209" pos="0 -0.083 0" quat="0.707107 0.707107 0 0"/> -->
                 
                 <body name="FR_thigh" pos="0 -0.083 0">
                     <inertial pos="-0.005607 0.003877 -0.048199" quat="0.694544 -0.0335669 -0.031246 0.717987" mass="0.639" diaginertia="0.0058474 0.00571186 0.000324584" />
@@ -108,7 +108,7 @@
                     
                     <!-- FR_thigh visual mesh and collision -->
                     <geom type="mesh" mesh="thigh_mirror" class="visual" rgba="0.2 0.2 0.2 1" />
-                    <geom type="box" class="collision" size="0.125 0.0187 0.0215" pos="0 0 -0.125" quat="0.707107 0 0.707107 0"/>
+                    <!-- <geom type="box" class="collision" size="0.125 0.0187 0.0215" pos="0 0 -0.125" quat="0.707107 0 0.707107 0"/> -->
                     
                     <body name="FR_calf" pos="0 0 -0.25">
                         <inertial pos="0.00215606 4.88427e-05 -0.166671" quat="0.707462 0.00517582 0.00535172 0.706712" mass="0.267" diaginertia="0.00690975 0.00689712 5.4885e-05" />
@@ -116,7 +116,7 @@
                         
                         <!-- FR_calf visual mesh and collision -->
                         <geom type="mesh" mesh="calf" class="visual" rgba="0 0 0 1"/>
-                        <geom type="box" class="collision" size="0.125 0.0104 0.008" pos="0 0 -0.125" quat="0.707107 0 0.707107 0"/>
+                        <!-- <geom type="box" class="collision" size="0.125 0.0104 0.008" pos="0 0 -0.125" quat="0.707107 0 0.707107 0"/> -->
                         
                         <!-- FR_foot only collision -->
                         <geom name="FR" class="collision" size="0.0265" pos="0 0 -0.25"/>
@@ -131,7 +131,7 @@
                 
                 <!-- RL_hip visual mesh and collision -->
                 <geom type="mesh" class="visual" quat="0 0 1 0" rgba="0.2 0.2 0.2 1" mesh="hip"/>
-                <geom type="capsule" class="collision" size="0.046 0.0209" pos="0 0.083 0" quat="0.707107 0.707107 0 0"/>
+                <!-- <geom type="capsule" class="collision" size="0.046 0.0209" pos="0 0.083 0" quat="0.707107 0.707107 0 0"/> -->
                 
                 <body name="RL_thigh" pos="0 0.083 0">
                     <inertial pos="-0.005607 -0.003877 -0.048199" quat="0.717987 -0.031246 -0.0335669 0.694544" mass="0.639" diaginertia="0.0058474 0.00571186 0.000324584" />
@@ -139,7 +139,7 @@
                     
                     <!-- RL_thigh visual mesh and collision -->
                     <geom type="mesh" class="visual" rgba="0.2 0.2 0.2 1" mesh="thigh"/>
-                    <geom type="box" class="collision" size="0.125 0.0187 0.0215" pos="0 0 -0.125" quat="0.707107 0 0.707107 0"/>
+                    <!-- <geom type="box" class="collision" size="0.125 0.0187 0.0215" pos="0 0 -0.125" quat="0.707107 0 0.707107 0"/> -->
                     
                     <body name="RL_calf" pos="0 0 -0.25">
                         <inertial pos="0.00215606 4.88427e-05 -0.166671" quat="0.707462 0.00517582 0.00535172 0.706712" mass="0.267" diaginertia="0.00690975 0.00689712 5.4885e-05" />
@@ -147,7 +147,7 @@
                         
                         <!-- RL_calf visual mesh and collision -->
                         <geom type="mesh" class="visual" rgba="0 0 0 1" mesh="calf"/>
-                        <geom type="box" class="collision" size="0.125 0.0104 0.008" pos="0 0 -0.125" quat="0.707107 0 0.707107 0"/>
+                        <!-- <geom type="box" class="collision" size="0.125 0.0104 0.008" pos="0 0 -0.125" quat="0.707107 0 0.707107 0"/> -->
                         
                         <!-- RL_foot only collision -->
                         <geom name="RL" class="collision" size="0.0265" pos="0 0 -0.25"/>
@@ -162,7 +162,7 @@
                 
                 <!-- RR_hip visual mesh and collision -->
                 <geom type="mesh" class="visual" quat="0 0 0 -1" rgba="0.2 0.2 0.2 1" mesh="hip"/>
-                <geom type="capsule" class="collision" size="0.046 0.0209" pos="0 -0.083 0" quat="0.707107 0.707107 0 0"/>
+                <!-- <geom type="capsule" class="collision" size="0.046 0.0209" pos="0 -0.083 0" quat="0.707107 0.707107 0 0"/> -->
                 
                 <body name="RR_thigh" pos="0 -0.083 0">
                     <inertial pos="-0.005607 0.003877 -0.048199" quat="0.694544 -0.0335669 -0.031246 0.717987" mass="0.639" diaginertia="0.0058474 0.00571186 0.000324584" />
@@ -170,7 +170,7 @@
                     
                     <!-- RR_thigh visual mesh and collision -->
                     <geom type="mesh" class="visual" rgba="0.2 0.2 0.2 1" mesh="thigh_mirror"/>
-                    <geom type="box" class="collision" size="0.125 0.0187 0.0215" pos="0 0 -0.125" quat="0.707107 0 0.707107 0"/>
+                    <!-- <geom type="box" class="collision" size="0.125 0.0187 0.0215" pos="0 0 -0.125" quat="0.707107 0 0.707107 0"/> -->
                     
                     <body name="RR_calf" pos="0 0 -0.25">
                         <inertial pos="0.00215606 4.88427e-05 -0.166671" quat="0.707462 0.00517582 0.00535172 0.706712" mass="0.267" diaginertia="0.00690975 0.00689712 5.4885e-05" />
@@ -178,7 +178,7 @@
                         
                         <!-- RR_calf visual mesh and collision -->
                         <geom type="mesh" class="visual" rgba="0 0 0 1" mesh="calf"/>
-                        <geom type="box" class="collision" size="0.125 0.0104 0.008" pos="0 0 -0.125" quat="0.707107 0 0.707107 0"/>
+                        <!-- <geom type="box" class="collision" size="0.125 0.0104 0.008" pos="0 0 -0.125" quat="0.707107 0 0.707107 0"/> -->
                         
                         <!-- RR_foot only collision -->
                         <geom name="RR" class="collision" size="0.0265" pos="0 0 -0.25" rgba="0 0 0 0"/>

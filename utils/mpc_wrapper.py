@@ -47,7 +47,10 @@ class BatchedMPCControllerWrapper:
         # Timer and liftoff states for the reference generator.
         self.q0 = config.q0.copy()          # Initial joint configuration
         
-        self.initial_state = jnp.concatenate([config.p0, config.quat0,config.q0, jnp.zeros(6+config.n_joints),config.p_legs0,jnp.zeros(3*config.n_contact)])
+        if config.grf_as_state:
+            self.initial_state = jnp.concatenate([config.p0, config.quat0,config.q0, jnp.zeros(6+config.n_joints),config.p_legs0,jnp.zeros(3*config.n_contact)])
+        else:
+            self.initial_state = jnp.concatenate([config.p0, config.quat0,config.q0, jnp.zeros(6+config.n_joints),config.p_legs0])
         # Get contact and body IDs from configuration
         self.contact_id = []
         for name in config.contact_frame:
@@ -185,8 +188,11 @@ class MPCControllerWrapper:
         # Timer and liftoff states for the reference generator.
         self.foot0 = config.p_legs0.copy()  # Initial foot positions (could be adjusted if needed)
         self.q0 = config.q0.copy()          # Initial joint configuration
-        
-        self.initial_state = jnp.concatenate([config.p0, config.quat0,config.q0, jnp.zeros(6+config.n_joints),config.p_legs0,jnp.zeros(3*config.n_contact)])
+
+        if self.config.grf_as_state:
+            self.initial_state = jnp.concatenate([config.p0, config.quat0,config.q0, jnp.zeros(6+config.n_joints),config.p_legs0,jnp.zeros(3*config.n_contact)])
+        else:
+            self.initial_state = jnp.concatenate([config.p0, config.quat0,config.q0, jnp.zeros(6+config.n_joints),config.p_legs0])
         # Get contact and body IDs from configuration
         self.contact_id = []
         for name in config.contact_frame:
@@ -279,7 +285,12 @@ class MPCControllerWrapper:
         foot_op = np.array([self.data.geom_xpos[self.contact_id[i]] for i in range(self.config.n_contact)])
         #set initial state
         input[6] = self.robot_height
-        x0 = jnp.concatenate([qpos, qvel,foot_op.flatten(),jnp.zeros(3*self.config.n_contact)])
+
+        if self.config.grf_as_state:
+            x0 = jnp.concatenate([qpos, qvel,foot_op.flatten(),jnp.zeros(3*self.config.n_contact)])
+        else:
+            x0 = jnp.concatenate([qpos, qvel,foot_op.flatten()])
+
         input = jnp.array(input)
         # Update the timer state for the gait reference.
         _ , self.contact_time = self._timer_run(self.duty_factor,self.step_freq,self.contact_time,1/self.mpc_frequency)
@@ -312,7 +323,7 @@ class MPCControllerWrapper:
         self.U0, self.X0, self.V0, tau_temp, q_temp, dq_temp = self.update_and_extract(U, X, V, x0, self.X0, self.U0)
 
         # TO DO change to values from config
-        tau = np.clip(np.array(tau_temp),-44,44)
+        tau = np.clip(np.array(tau_temp),self.config.min_torque,self.config.max_torque)
         q = np.array(q_temp)
         dq = np.array(dq_temp)
 
@@ -326,7 +337,10 @@ class MPCControllerWrapper:
         # self.data.qvel = qvel 
         mujoco.mj_kinematics(self.model, self.data)
         foot_op = np.array([self.data.geom_xpos[self.contact_id[i]] for i in range(self.config.n_contact)])
-        x0 = jnp.concatenate([qpos, qvel,foot_op.flatten(),jnp.zeros(3*self.config.n_contact)])
+        if self.config.grf_as_state:
+            x0 = jnp.concatenate([qpos, qvel,foot_op.flatten(),jnp.zeros(3*self.config.n_contact)])
+        else:
+            x0 = jnp.concatenate([qpos, qvel,foot_op.flatten()])
         self.contact_time = self.config.timer_t
         self.liftoff = foot_op.flatten()
         self.U0 = jnp.tile(self.config.u_ref, (self.config.N, 1))

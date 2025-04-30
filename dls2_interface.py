@@ -10,7 +10,7 @@ import base_state
 import time
 
 import utils.mpc_wrapper as mpc_wrapper
-import utils.config as config
+import config.config_quadruped as config
 
 import jax
 from jax import numpy as jnp

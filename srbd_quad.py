@@ -24,7 +24,7 @@ from mujoco import mjx
 import utils.mpc_utils as mpc_utils
 import utils.models as mpc_dyn_model
 import utils.objectives as mpc_objectives
-import utils.config_srbd as config
+import config.config_srbd as config
 import utils.mpc_wrapper_srbd as mpc_wrapper_srbd
 
 gpu_device = jax.devices('gpu')[0]
