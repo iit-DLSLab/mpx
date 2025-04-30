@@ -64,51 +64,72 @@ env.render()
 
 
 # Dataset Parameters
-total_counter = 0
 run_length_time = 10.0
-run_counter = 0
-n_runs = 50
-dataset = {}
-env_id = 0
-run_id = -1
+n_runs = 5
 dataset_frequency = 100.0
+random_gait = True
+random_init = True
 
 
 def reset(env, mpc, config, key):
     key, key_ang, key_lin, key_height = jax.random.split(key, 4)
 
     ## Resample Reference
-    ref_base_ang_vel_min = -0.3
-    ref_base_ang_vel_max = 0.3
+    ref_base_ang_vel_min = -0.2
+    ref_base_ang_vel_max = 0.2
     ref_base_ang_vel = jnp.array([0,
                                   0,
                                   jax.random.uniform(key_ang, shape=(), minval=ref_base_ang_vel_min, maxval=ref_base_ang_vel_max)])
 
-    ref_base_lin_vel_min = jnp.array([-0.3, -0.3, 0])
-    ref_base_lin_vel_max = jnp.array([0.5, 0.3, 0])
+    ref_base_lin_vel_min = jnp.array([-0.2, -0.2, 0])
+    ref_base_lin_vel_max = jnp.array([0.3, 0.2, 0])
     ref_base_lin_vel = jax.random.uniform(key_lin, shape=(3,), minval=ref_base_lin_vel_min, maxval=ref_base_lin_vel_max)
 
     ref_base_height_lim = 0.01
     ref_base_height = config.robot_height
     ref_base_height += jax.random.uniform(key_height, minval=-ref_base_height_lim, maxval=ref_base_height_lim)
 
-
     ref_param = (ref_base_lin_vel, ref_base_ang_vel, ref_base_height)
     print(f'ref_param\n {ref_param}')
 
-    # TODO: Find a way to randomize the initial configuration, maybe use 
-    q_init = jnp.concatenate([config.p0, config.quat0,config.q0])
-    q_rand = 0.1
-    # q_arm = jax.random.uniform(key_init, shape=(8,), minval=-q_rand, maxval=q_rand)
-    # q_init = q_init.at[6:].add(q_arm)
-    # print(f'q_init\n {q_init}')
+    ## Random Gait
+    if random_gait:
+        key, key_gait, key_sf, key_df = jax.random.split(key, 4)
+        gait_type = jax.random.randint(key_gait, shape=(), minval=0, maxval=2) # Set maxval 3 to have pace
+        
+        # Static Walk
+        if gait_type == 0:
+            timer_t  = jnp.array([0.25, 0.75, 0.99, 0.5])
+            step_freq = jax.random.uniform(key_sf, shape=(), minval=0.4, maxval=0.5)
+            duty_factor = 0.8#jax.random.uniform(key_df, shape=(), minval=0.8, maxval=0.85)
+            
+        # Trot
+        elif gait_type == 1:
+            timer_t = jnp.array([0.5, 0.0, 0.0, 0.5])
+            step_freq = jax.random.uniform(key_sf, shape=(), minval=1.2, maxval=1.4)
+            duty_factor = jax.random.uniform(key_df, shape=(), minval=0.62, maxval=0.68)
 
-    qd_init = jnp.zeros(config.n_joints + 6)
+        # Pace
+        else:
+            timer_t = jnp.array([0.5, 0.0, 0.5, 0.0])
+            step_freq = jax.random.uniform(key_sf, shape=(), minval=1.1, maxval=1.8)
+            duty_factor = jax.random.uniform(key_df, shape=(), minval=0.6, maxval=0.7)
 
-    # Reset Environment
-    # env.reset(qpos=q_init,
-    #           qvel=qd_init)
-    env.reset(random=True)
+        print(f'gait_type {gait_type} | step_freq {step_freq} | duty_factor {duty_factor}')
+        # Reset MPC
+        mpc.config.timer_t = timer_t
+        mpc.config.step_freq = step_freq
+        mpc.config.duty_factor = duty_factor
+
+    # This will ignore the initial position in the config
+    if random_init:
+        env.reset(random=True)
+    else:
+        q_init = jnp.concatenate([config.p0, config.quat0,config.q0])
+        qd_init = jnp.zeros(config.n_joints + 6)
+        env.reset(qpos=q_init,
+                  qvel=qd_init)
+
 
     print(f'q_init\n {env.mjData.qpos.copy()}')
     # Reset MPC
@@ -172,6 +193,11 @@ def add_sim_data_to_dataset(dataset, time, mj_data, mj_model):
 
 
 # Init Data
+total_counter = 0
+run_counter = 0
+dataset = {}
+env_id = 0
+run_id = -1
 tau = jnp.zeros(config.n_joints)
 tau_old = jnp.zeros(config.n_joints)
 nan_flag = False
@@ -236,13 +262,6 @@ while env.viewer.is_running():
     # MPC Update
     if counter % (sim_frequency / mpc_frequency) == 0 or counter == 0:
 
-        # ref_base_lin_vel = env._ref_base_lin_vel_H
-        # ref_base_ang_vel = np.array([0., 0., env._ref_base_ang_yaw_dot])
-
-        # input = np.array([ref_base_lin_vel[0],ref_base_lin_vel[1],ref_base_lin_vel[2],
-        #                     ref_base_ang_vel[0],ref_base_ang_vel[1],ref_base_ang_vel[2],
-        #                     config.robot_height])
-
         input = np.concatenate((ref_base_lin_vel, ref_base_ang_vel, np.array([ref_height])))
 
         tau_old = tau
@@ -271,7 +290,13 @@ dataset['step_freq'] = config.step_freq
 dataset['step_height'] = config.step_height
 
 Nsamples = int(n_runs * run_length_time * sim_frequency)
-filename = robot_name + '_samples_' + str(Nsamples) + '_n_runs_' + str(n_runs) + '_data_freq_' + str(int(dataset_frequency)) + '_sim_freq_' + str(int(sim_frequency)) + '_total_time_' + str(int(run_length_time)) + '_base_full_arm.pkl'
+filename = robot_name + '_samples_' + str(Nsamples) 
+filename += '_n_runs_' + str(n_runs) + '_data_freq_' 
+filename += str(int(dataset_frequency)) + '_sim_freq_' + str(int(sim_frequency)) 
+filename += '_total_time_' + str(int(run_length_time)) + '_base_full_arm'
+filename += '_rg_' if random_gait else ''
+filename += '_ri_' if random_init else ''
+filename += '.pkl'
 with open(folder_name + filename, 'wb') as fp:
     pickle.dump(dataset, fp)
     print(f'Dictionary saved successfully to file {filename} | Nsamples {total_counter}')
