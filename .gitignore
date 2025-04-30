@@ -6,3 +6,4 @@ jax_cache/
 c_generated_code/
 **/__pycache__/
 *.csv
+**.tmp.**
