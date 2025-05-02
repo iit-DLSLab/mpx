@@ -40,6 +40,9 @@ class BatchedMPCControllerWrapper:
 
         self.n_env = n_env
         model = mujoco.MjModel.from_xml_path(config.model_path)
+        data = mujoco.MjData(model)
+        mujoco.mj_fwdPosition(model, data)
+        robot_mass = data.qM[0]
         mjx_model = mjx.put_model(model)
         self.config = config
         self.mpc_frequency = config.mpc_frequency
@@ -79,8 +82,7 @@ class BatchedMPCControllerWrapper:
         work = partial(optimizers.mpc, cost, dynamics, hessian_approx, False)
         
         reference_generator = partial(mpc_utils.reference_generator,
-            config.use_terrain_estimation, config.N, config.dt, config.n_joints, config.n_contact,
-            duty_factor = config.duty_factor,  step_freq= config.step_freq ,step_height=config.step_height,foot0 = config.p_legs0, q0 = config.q0)
+            config.use_terrain_estimation ,config.N, config.dt, config.n_joints, config.n_contact, robot_mass, foot0 = config.p_legs0, q0 = config.q0)
         
         timer_t = partial(mpc_utils.timer_run, duty_factor=config.duty_factor, step_freq=config.step_freq)
 
@@ -91,6 +93,9 @@ class BatchedMPCControllerWrapper:
         self.contact_time = jnp.tile(config.timer_t, (n_env, 1))
         self.liftoff = jnp.zeros((n_env, 3*config.n_contact))
 
+        self.duty_factor = jnp.tile(config.duty_factor, (n_env, 1))
+        self.step_freq = jnp.tile(config.step_freq, (n_env, 1))
+        self.step_height = jnp.tile(config.step_height, (n_env, 1))
         
     def run(self, x0, input, foot_op):
         """
@@ -110,6 +115,9 @@ class BatchedMPCControllerWrapper:
         
         # Generate reference trajectory and additional MPC parameters.
         reference, parameter, self.liftoff = self._ref_gen(
+            duty_factor = self.duty_factor,
+            step_freq = self.step_freq,
+            step_height = self.step_height,
             t_timer = self.contact_time.copy(),
             x = x0,
             foot = foot_op,
@@ -148,14 +156,13 @@ class BatchedMPCControllerWrapper:
 
         return tau , q, dq
     
-    def reset(self,envs):
+    def reset(self,envs,foot):
         """
         Resets the MPC controller state."
         """
-        envs = jax_dlpack.from_dlpack(envs)
         n_env_reset = envs.shape[0]
         self.contact_time = self.contact_time.at[envs,:].set(jnp.tile(self.config.timer_t, (n_env_reset, 1)))
-        self.liftoff = self.liftoff.at[envs,:].set(jnp.zeros((n_env_reset, 3*self.config.n_contact)))
+        self.liftoff = self.liftoff.at[envs,:].set(foot)
         U0 = jnp.tile(self.config.u_ref, (self.config.N, 1))
         X0 = jnp.tile(self.initial_state, (self.config.N + 1, 1))
         V0 = jnp.zeros((self.config.N + 1, self.config.n))
@@ -180,6 +187,8 @@ class MPCControllerWrapper:
         
         self.model = mujoco.MjModel.from_xml_path(config.model_path)
         self.data = mujoco.MjData(self.model)
+        mujoco.mj_fwdPosition(self.model, self.data)
+        robot_mass = self.data.qM[0]
         mjx_model = mjx.put_model(self.model)
         self.config = config
         self.mpc_frequency = config.mpc_frequency
@@ -193,6 +202,7 @@ class MPCControllerWrapper:
             self.initial_state = jnp.concatenate([config.p0, config.quat0,config.q0, jnp.zeros(6+config.n_joints),config.p_legs0,jnp.zeros(3*config.n_contact)])
         else:
             self.initial_state = jnp.concatenate([config.p0, config.quat0,config.q0, jnp.zeros(6+config.n_joints),config.p_legs0])
+        
         # Get contact and body IDs from configuration
         self.contact_id = []
         for name in config.contact_frame:
@@ -215,7 +225,7 @@ class MPCControllerWrapper:
         work = partial(optimizers.mpc, cost, dynamics, hessian_approx, False)
         
         reference_generator = partial(mpc_utils.reference_generator,
-            config.use_terrain_estimation ,config.N, config.dt, config.n_joints, config.n_contact, foot0 = config.p_legs0, q0 = config.q0)
+            config.use_terrain_estimation ,config.N, config.dt, config.n_joints, config.n_contact, robot_mass,foot0 = config.p_legs0, q0 = config.q0)
         
         timer_t = partial(mpc_utils.timer_run, duty_factor=config.duty_factor, step_freq=config.step_freq)
 

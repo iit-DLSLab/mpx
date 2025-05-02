@@ -24,7 +24,7 @@ from timeit import default_timer as timer
 # jax.default_device(gpu_device)
  
 # Define robot and scene parameters
-robot_name = "aliengo"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
+robot_name = "go2"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
 scene_name = "flat"
 robot_feet_geom_names = dict(FR='FR',FL='FL', RR='RR' , RL='RL')
 robot_leg_joints = dict(FR=['FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint', ],
@@ -40,7 +40,7 @@ env = QuadrupedEnv(robot=robot_name,
                    scene=scene_name,
                    sim_dt = 1/sim_frequency,  # Simulation time step [s]
                    ref_base_lin_vel=0.0, # Constant magnitude of reference base linear velocity [m/s]
-                   ground_friction_coeff=1.5,  # pass a float for a fixed value
+                   ground_friction_coeff=0.7,  # pass a float for a fixed value
                    base_vel_command_type="human",  # "forward", "random", "forward+rotate", "human"
                    state_obs_names=state_observables_names,  # Desired quantities in the 'state'
                    )

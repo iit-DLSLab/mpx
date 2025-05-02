@@ -33,8 +33,8 @@ def terrain_orientation(liftoff_pos):
 
     return jnp.roll(quat,1)
 
-@partial(jax.jit, static_argnums=(0,1,2,3,4))
-def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
+@partial(jax.jit, static_argnums=(0,1,2,3,4,5))
+def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff):
     p = x[:3]
     quat = x[3:7]
     # q = x[7:7+n_joints]
@@ -112,7 +112,7 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,foot0,q0,t
         new_foot = new_foot.at[t,1::3].set(new_foot_y)
         new_foot = new_foot.at[t,2::3].set(new_foot_z)
 
-        grf_new = grf_new.at[t,2::3].set((new_contact_sequence*850/jnp.sum(new_contact_sequence)))
+        grf_new = grf_new.at[t,2::3].set((new_contact_sequence*mass*9.81/jnp.sum(new_contact_sequence)))
 
         return (timer_seq, contact_sequence,new_foot,liftoff_x,liftoff_y,liftoff_z,grf_new)
 

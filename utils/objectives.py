@@ -92,6 +92,8 @@ def quadruped_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
     dp_ref = reference[t,7+n_joints:10+n_joints]
     omega_ref = reference[t,10+n_joints:13+n_joints]
     p_leg_ref = reference[t,13+n_joints:13+n_joints+3*n_contact]
+    contact = reference[t,13+n_joints+3*n_contact:13+n_joints+4*n_contact]
+    grf_ref = reference[t,13+n_joints+4*n_contact:13+n_joints+7*n_contact]
     stand_up_flag = reference[t,-1]
     mu = 0.7
     friction_cone = mu*grf[2::3] - jnp.sqrt(jnp.square(grf[1::3]) + jnp.square(grf[::3]) + jnp.ones(n_contact)*1e-2)
@@ -99,14 +101,17 @@ def quadruped_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
     torque_limits = jnp.array([
         44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44,
         44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44 ])
+    #min grf 
+    # min_force = grf[2::3] - jnp.ones(n_contact)*10
     torque_limits = jnp.kron(jnp.eye(n_joints),(jnp.array([-1,1]))).T@tau+torque_limits + jnp.ones_like(torque_limits)*1e-2
-    contact = reference[t,13+n_joints+3*n_contact:13+n_joints+4*n_contact]
+    
     # contact_map = jnp.array([0,0,contact[0],0,0,contact[1],0,0,contact[2],0,0,contact[3]])
     stage_cost = (p - p_ref).T @ W[:3,:3] @ (p - p_ref) + math.quat_sub(quat,quat_ref).T@W[3:6,3:6]@math.quat_sub(quat,quat_ref) + (q - q_ref).T @ W[6:6+n_joints,6:6+n_joints] @ (q - q_ref) +\
                  (dp - dp_ref).T @ W[6+n_joints:9+n_joints,6+n_joints:9+n_joints] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9+n_joints:12+n_joints,9+n_joints:12+n_joints] @ (omega - omega_ref) + dq.T @ W[12+n_joints:12+2*n_joints,12+n_joints:12+2*n_joints] @ dq +\
                  ((p_leg - p_leg_ref)).T @W[12+2*n_joints:12+2*n_joints+3*n_contact,12+2*n_joints:12+2*n_joints+3*n_contact]@ ((p_leg - p_leg_ref))+ \
                  tau.T @ W[12+2*n_joints+3*n_contact:12+3*n_joints+3*n_contact,12+2*n_joints+3*n_contact:12+3*n_joints+3*n_contact] @ tau +\
-                 jnp.sum(friction_cone*contact) + jnp.sum(penaly(torque_limits,1,1))
+                 (grf-grf_ref).T @ W[12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact,12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact] @ (grf-grf_ref) +\
+                 jnp.sum(penaly(torque_limits,1,1)) + jnp.sum(friction_cone*contact)
     term_cost = (p - p_ref).T @ W[:3,:3] @ (p - p_ref) + math.quat_sub(quat,quat_ref).T@W[3:6,3:6]@math.quat_sub(quat,quat_ref) + (q - q_ref).T @ W[6:6+n_joints,6:6+n_joints] @ (q - q_ref) +\
                  (dp - dp_ref).T @ W[6+n_joints:9+n_joints,6+n_joints:9+n_joints] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9+n_joints:12+n_joints,9+n_joints:12+n_joints] @ (omega - omega_ref) + dq.T @ W[12+n_joints:12+2*n_joints,12+n_joints:12+2*n_joints] @ dq
 
@@ -135,15 +140,7 @@ def quadruped_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
         dp_ref = reference[t,7+n_joints:10+n_joints]
         omega_ref = reference[t,10+n_joints:13+n_joints]
         p_leg_ref = reference[t,13+n_joints:13+n_joints+3*n_contact]
-        # yaw = jnp.arctan2(2*(quat[0]*quat[3] + quat[1]*quat[2]), 1 - 2*(quat[2]*quat[2] + quat[3]*quat[3]))
-        # Ryaw = jnp.array([[jnp.cos(yaw), -jnp.sin(yaw), 0],[jnp.sin(yaw), jnp.cos(yaw), 0],[0, 0, 1]])
-        # foot = jnp.tile(p,n_contact) + foot0@jax.scipy.linalg.block_diag(Ryaw,Ryaw,Ryaw,Ryaw).T
-        # def calc_foothold(direction):
-        #         f1 = 0.5*dp_ref[direction]*duty_factor/step_freq
-        #         # f2 = jnp.sqrt(0.27/9.81)*(dp[direction]-dp_ref[direction])
-        #         f = f1 + foot[direction::3]
-        #         return f
-        # contact_map = jnp.array([0,0,contact[0],0,0,contact[1],0,0,contact[2],0,0,contact[3]])
+        grf_ref = reference[t,13+n_joints+4*n_contact:13+n_joints+7*n_contact]
         p_res = (p - p_ref).T
         quat_res = math.quat_sub(quat,quat_ref).T
         q_res = (q - q_ref).T
@@ -152,9 +149,8 @@ def quadruped_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
         dq_res = dq.T
         p_leg_res = ((p_leg - p_leg_ref)).T
         tau_res = tau.T
-        # foot_speed_res_x = foot_speed[::3].T*flag_inital_phase_swing
-        # foot_speed_res_y = foot_speed[1::3].T*flag_inital_phase_swing
-        return jnp.concatenate([p_res,quat_res,q_res,dp_res,omega_res,dq_res,p_leg_res,tau_res])
+        grf_res = (grf-grf_ref).T
+        return jnp.concatenate([p_res,quat_res,q_res,dp_res,omega_res,dq_res,p_leg_res,tau_res,grf_res])
     def friction_constraint(x):
         grf = x[13+2*n_joints+3*n_contact:]
         mu = 0.7
@@ -166,17 +162,24 @@ def quadruped_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
         44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44,
         44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44 ])
         return jnp.kron(jnp.eye(n_joints),(jnp.array([-1,1]))).T@tau+torque_limits + jnp.ones_like(torque_limits)*1e-2
+    def min_force_constraint(x):
+        grf = x[13+2*n_joints+3*n_contact:]
+        min_force = grf[2::3] - jnp.ones(n_contact)*10
+        return min_force
     J_x = jax.jacobian(residual,0)
     J_u = jax.jacobian(residual,1)
     hessian_penaly = jax.grad(jax.grad(penaly))
     J_friction_cone = jax.jacobian(friction_constraint)
     J_torque = jax.jacobian(torque_constraint)
+    # J_min_force = jax.jacobian(min_force_constraint)
     hessian_penaly_torque = partial(hessian_penaly,alpha = 1,sigma = 1)
     # W = W.at[12+2*n_joints + 6:12+2*n_joints+3*n_contact,12+2*n_joints + 6:12+2*n_joints+3*n_contact].set(W[12+2*n_joints + 6:12+2*n_joints+3*n_contact,12+2*n_joints + 6:12+2*n_joints+3*n_contact]*stand_up_flag)
     H_penalty = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(friction_constraint(x)), -1e6, 1e6)*contact)
     H_penalty_torque = jnp.diag(jnp.clip(jax.vmap(hessian_penaly_torque)(torque_constraint(u)), -1e6, 1e6))
+    # H_penalty_min_force = jnp.diag(jnp.clip(jax.vmap(hessian_penaly_torque)(min_force_constraint(x)), -1e6, 1e6)*contact)
     H_constraint = J_friction_cone(x).T@H_penalty@J_friction_cone(x)
     H_constraint_u = J_torque(u).T@H_penalty_torque@J_torque(u)
+    # H_constraint += J_min_force(x).T@H_penalty_min_force@J_min_force(x)
     return J_x(x,u).T@W@J_x(x,u) + H_constraint, J_u(x,u).T@W@J_u(x,u) + H_constraint_u, J_x(x,u).T@W@J_u(x,u)
 
 def h1_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
