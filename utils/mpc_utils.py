@@ -41,28 +41,27 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,foot0,q0,t
     dp = x[7+n_joints:10+n_joints]
     # omega = x[10+n_joints:13+n_joints]
     # dq = x[13+n_joints:13+2*n_joints]
-    ref_lin_vel = input[:3]
-    ref_ang_vel = input[3:6]
     # proprio_height = input[6] + jnp.sum(contact*foot[2::3])/jnp.sum(contact)
     proprio_height = input[6] + jnp.sum(liftoff[2::3])/n_contact
     p = jnp.array([p[0], p[1], proprio_height])
-    p_ref_x = jnp.arange(N+1) * dt * ref_lin_vel[0] + p[0]
-    p_ref_y = jnp.arange(N+1) * dt * ref_lin_vel[1] + p[1]
-    p_ref_z = jnp.ones(N+1) * proprio_height
-    p_ref = jnp.stack([p_ref_x, p_ref_y, p_ref_z], axis=1)
     if use_terrain_estimator:
         quat_ref = jnp.tile(terrain_orientation(liftoff), (N+1, 1))
     else:
         quat_ref = jnp.tile(jnp.array([1, 0, 0, 0]), (N+1, 1))
     q_ref = jnp.tile(q0, (N+1, 1))
-
-    omega_ref = jnp.tile(ref_ang_vel, (N+1, 1))
     contact_sequence = jnp.zeros(((N+1), n_contact))
     pitch = jnp.arcsin(2 * (quat_ref[0,0] * quat_ref[0,2] - quat_ref[0,3] * quat_ref[0,1]))
     Rpitch = jnp.array([[jnp.cos(pitch), 0, jnp.sin(pitch)], [0, 1, 0], [-jnp.sin(pitch), 0, jnp.cos(pitch)]])
     yaw = jnp.arctan2(2*(quat[0]*quat[3] + quat[1]*quat[2]), 1 - 2*(quat[2]*quat[2] + quat[3]*quat[3]))
     Ryaw = jnp.array([[jnp.cos(yaw), -jnp.sin(yaw), 0],[jnp.sin(yaw), jnp.cos(yaw), 0],[0, 0, 1]])
-    dp_ref = jnp.tile(Ryaw@Rpitch@ref_lin_vel, (N+1, 1))
+    ref_lin_vel = Ryaw@Rpitch@input[:3]
+    ref_ang_vel = input[3:6]
+    p_ref_x = jnp.arange(N+1) * dt * ref_lin_vel[0] + p[0]
+    p_ref_y = jnp.arange(N+1) * dt * ref_lin_vel[1] + p[1]
+    p_ref_z = jnp.ones(N+1) * proprio_height
+    p_ref = jnp.stack([p_ref_x, p_ref_y, p_ref_z], axis=1)
+    dp_ref = jnp.tile(ref_lin_vel, (N+1, 1))
+    omega_ref = jnp.tile(ref_ang_vel, (N+1, 1))
     foot_ref = jnp.tile(foot, (N+1, 1))
     hip = jnp.tile(p, n_contact) + foot0 @ jax.scipy.linalg.block_diag(*([Ryaw] * n_contact)).T
     grf_ref = jnp.zeros((N+1, 3*n_contact))
