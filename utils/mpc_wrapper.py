@@ -398,7 +398,6 @@ class MPCControllerWrapper:
         last_cost = 1e10
         i = 0
         while not _exit:
-            print("Iteration: ", i)
             start = timer()
 
             X, U, V = self._solve(
@@ -422,14 +421,16 @@ class MPCControllerWrapper:
             stop = timer()
 
             l2_cost = np.sum(g*g)
+            
+            if i == 0:
+                print("{:<10} {:<20} {:<20} {:<20}".format("Iter", "Cost", "Constraint", "Time Elapsed"))
+            print("{:<10d} {:<20.5f} {:<20.5f} {:<20.5f}".format(i, l2_cost, np.sum(c*c), stop-start))
             i += 1
+            
             if i > max_iter:
                 _exit = True
-            if l2_cost - last_cost < 1e-5 and np.sum(c*c) < 1e-5:
+            if last_cost - l2_cost < 1e-3 and np.sum(c*c) < 1e-5:
                 _exit = True
             last_cost = l2_cost
-            print(f"Cost: {l2_cost}")
-            print(f"Constraint: {np.sum(c*c)}")
-            print(f"Time elapsed: {stop-start}")
 
         return self.X0, self.U0, reference

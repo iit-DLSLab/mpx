@@ -79,30 +79,14 @@ dq = jnp.zeros(config.n_joints)
 mpc_time = 0
 mpc.robot_height = config.robot_height
 mpc.reset(env.mjData.qpos.copy(),env.mjData.qvel.copy())
-U = jnp.zeros((config.N, config.m))
-X = jnp.zeros((config.N+1, config.n))
+
+X,U,reference = mpc.runOffline(jnp.concatenate([config.p0, config.quat0,config.q0]),jnp.zeros(6+config.n_joints))
+
 import matplotlib.pyplot as plt
 iteration = 0
 
 while env.viewer.is_running():
-    if counter == 0:
-        
-        X,U,reference = mpc.runOffline(jnp.concatenate([config.p0, config.quat0,config.q0]),jnp.zeros(6+config.n_joints))
-        iteration += 20
-        print(iteration)
-        fig, axs = plt.subplots(config.n_joints, 1, figsize=(8, 2 * config.n_joints))
-        if config.n_joints == 1:
-            axs = [axs]
-        for i in range(config.n_joints):
-            axs[i].plot(U[:,i]) 
-            axs[i].set_title(f'Joint {i+1}')
-            axs[i].set_xlabel('Time Step')
-            axs[i].set_ylabel('Torque')
-        fig.tight_layout()
-        plt.show()
-        
-    qpos = env.mjData.qpos.copy()
-    qvel = env.mjData.qvel.copy()
+    
     env.mjData.qpos = X[counter,:7+config.n_joints]
     env.mjData.qvel = X[counter,7+config.n_joints:13+2*config.n_joints]
     grf = X[counter,13+2*config.n_joints + 3*config.n_contact:13+2*config.n_joints+6*config.n_contact]
