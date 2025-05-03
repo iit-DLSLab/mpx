@@ -74,7 +74,7 @@ def quadruped_srbd_hessian_gn(n_contact,W,reference,x, u, t):
     H_constraint = J_friction_cone(u).T@H_penalty@J_friction_cone(u)
     return J_x(x,u).T@W@J_x(x,u), J_u(x,u).T@W@J_u(x,u) + H_constraint, J_x(x,u).T@W@J_u(x,u)
 
-def quadruped_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
+def quadruped_wb_obj(swing_tracking,n_joints,n_contact,N,W,reference,x, u, t):
     
     p = x[:3]
     quat = x[3:7]
@@ -104,11 +104,14 @@ def quadruped_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
     #min grf 
     # min_force = grf[2::3] - jnp.ones(n_contact)*10
     torque_limits = jnp.kron(jnp.eye(n_joints),(jnp.array([-1,1]))).T@tau+torque_limits + jnp.ones_like(torque_limits)*1e-2
-    
-    # contact_map = jnp.array([0,0,contact[0],0,0,contact[1],0,0,contact[2],0,0,contact[3]])
+    if swing_tracking:
+        contact_map = jnp.ones(3*n_contact)
+    else:
+        contact_map = jnp.array([jnp.ones(3)*contact[i] for i in range(n_contact)]).flatten()
+
     stage_cost = (p - p_ref).T @ W[:3,:3] @ (p - p_ref) + math.quat_sub(quat,quat_ref).T@W[3:6,3:6]@math.quat_sub(quat,quat_ref) + (q - q_ref).T @ W[6:6+n_joints,6:6+n_joints] @ (q - q_ref) +\
                  (dp - dp_ref).T @ W[6+n_joints:9+n_joints,6+n_joints:9+n_joints] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9+n_joints:12+n_joints,9+n_joints:12+n_joints] @ (omega - omega_ref) + dq.T @ W[12+n_joints:12+2*n_joints,12+n_joints:12+2*n_joints] @ dq +\
-                 ((p_leg - p_leg_ref)).T @W[12+2*n_joints:12+2*n_joints+3*n_contact,12+2*n_joints:12+2*n_joints+3*n_contact]@ ((p_leg - p_leg_ref))+ \
+                 (contact_map*(p_leg - p_leg_ref)).T @W[12+2*n_joints:12+2*n_joints+3*n_contact,12+2*n_joints:12+2*n_joints+3*n_contact]@ (contact_map*(p_leg - p_leg_ref))+ \
                  tau.T @ W[12+2*n_joints+3*n_contact:12+3*n_joints+3*n_contact,12+2*n_joints+3*n_contact:12+3*n_joints+3*n_contact] @ tau +\
                  (grf-grf_ref).T @ W[12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact,12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact] @ (grf-grf_ref) +\
                  jnp.sum(penaly(torque_limits,1,1)) + jnp.sum(friction_cone*contact)
@@ -118,7 +121,7 @@ def quadruped_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
 
     return jnp.where(t == N, 0.5 * term_cost, 0.5 * stage_cost)
 
-def quadruped_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
+def quadruped_wb_hessian_gn(swing_tracking,n_joints,n_contact,W,reference,x, u, t):
 
     contact = reference[t,13+n_joints+3*n_contact:13+n_joints+4*n_contact]
 
@@ -147,7 +150,11 @@ def quadruped_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
         dp_res = (dp - dp_ref).T
         omega_res = (omega - omega_ref).T
         dq_res = dq.T
-        p_leg_res = ((p_leg - p_leg_ref)).T
+        if swing_tracking:
+            contact_map = jnp.ones(3*n_contact)
+        else:
+            contact_map = jnp.array([jnp.ones(3)*contact[i] for i in range(n_contact)]).flatten()
+        p_leg_res = (contact_map*(p_leg - p_leg_ref)).T
         tau_res = tau.T
         grf_res = (grf-grf_ref).T
         return jnp.concatenate([p_res,quat_res,q_res,dp_res,omega_res,dq_res,p_leg_res,tau_res,grf_res])
