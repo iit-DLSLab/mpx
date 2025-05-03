@@ -254,11 +254,11 @@ def quadruped_wb_dynamics_explicit_contact(model, mjx_model, contact_id, body_id
     # Concatenate the positions of the legs into a single vector
     current_leg = jnp.concatenate([FL_leg, FR_leg, RL_leg, RR_leg], axis=0)
     
-    contact_stifness = 2000
-    smothing = 0.01
+    contact_stifness = 1200
+    smothing = 0.05
     dissipation_velocity = 0.1
     stiction_velocity = 0.5
-    friction_coefficient = 1
+    friction_coefficient = 0.5
 
     # Compute the velocity-level constraint violation
     g_dot = J.T @ x[n_joints+7:13+2*n_joints]
@@ -288,6 +288,16 @@ def quadruped_wb_dynamics_explicit_contact(model, mjx_model, contact_id, body_id
 
     return x_next
 
+from functools import partial
+import pickle
+# Load parameters from a pickle file
+def load_params(file_path):
+    with open(file_path, "rb") as f:
+        params = pickle.load(f)
+    return params
+params_file_path = "./trained_params.pkl"
+params = load_params(params_file_path)
+
 def quadruped_wb_dynamics_learned_contact_model(model, mjx_model, contact_id, body_id, n_joints, dt, x, u, t, parameter):
     """
     Compute the whole-body dynamics of a quadruped robot using forward dynamics and a learned contact model.
@@ -308,39 +318,19 @@ def quadruped_wb_dynamics_learned_contact_model(model, mjx_model, contact_id, bo
         jnp.ndarray: The updated state vector after applying dynamics and contact forces.
     """
     # encoding = 64
-    input_size = 13 + 2*n_joints
-    hidden_layer_size_1 = 64
-    hidden_layer_size_2 = 128
-    output_size = 6 + n_joints
+    input_size = 13 + 3*n_joints
+    hidden_layer_size_1 = 128
+    hidden_layer_size_2 = 64
+    output_size = 3*len(contact_id)
 
-    def NN(state):
-
-        W_h_1 = parameter[t,:hidden_layer_size_1*input_size].reshape(hidden_layer_size_1,input_size)
-        b_h_1 = parameter[t,hidden_layer_size_1*input_size:
-                          hidden_layer_size_1*input_size + hidden_layer_size_1]
-
-        hidden_state = W_h_1 @ state + b_h_1
-        
-        hidden_state = jax.nn.softplus(hidden_state)
-
-
-        W_h_2 = parameter[t,hidden_layer_size_1*input_size + hidden_layer_size_1 : 
-                          hidden_layer_size_1*input_size + hidden_layer_size_1 + hidden_layer_size_1*hidden_layer_size_2].reshape(hidden_layer_size_2,hidden_layer_size_1)
-        b_h_2 = parameter[t,hidden_layer_size_1*input_size + hidden_layer_size_1 + hidden_layer_size_1*hidden_layer_size_2:
-                          hidden_layer_size_1*input_size + hidden_layer_size_1 + hidden_layer_size_1*hidden_layer_size_2 + hidden_layer_size_2]
-
-        hidden_state_2 = W_h_2 @ hidden_state + b_h_2
-        
-        hidden_state_2 = jax.nn.softplus(hidden_state_2)
-
-        st_size = hidden_layer_size_1*input_size + hidden_layer_size_1 + hidden_layer_size_1*hidden_layer_size_2 + hidden_layer_size_2
-        W_output = parameter[t,st_size : 
-                             st_size + hidden_layer_size_2*output_size].reshape(output_size,hidden_layer_size_2)
-        b_output = parameter[t,st_size + hidden_layer_size_2*output_size:
-                             st_size + hidden_layer_size_2*output_size + output_size]
-
-        return W_output@hidden_state_2 + b_output
-    
+    def mlp_apply(params, x):
+        x = jnp.dot(x, params["W1"]) + params["b1"]
+        x = jax.nn.softplus(x)
+        x = jnp.dot(x, params["W2"]) + params["b2"]
+        x = jax.nn.softplus(x)
+        x = jnp.dot(x, params["W3"]) + params["b3"]
+        return x    
+    contact_model = partial(mlp_apply, params)
     # Create a new data object for the simulation
     mjx_data = mjx.make_data(model)
 
@@ -364,11 +354,21 @@ def quadruped_wb_dynamics_learned_contact_model(model, mjx_model, contact_id, bo
     RL_leg = mjx_data.geom_xpos[contact_id[2]]
     RR_leg = mjx_data.geom_xpos[contact_id[3]]
 
+    # Compute the Jacobians for each leg
+    J_FL, _ = mjx.jac(mjx_model, mjx_data, FL_leg, body_id[0])
+    J_FR, _ = mjx.jac(mjx_model, mjx_data, FR_leg, body_id[1])
+    J_RL, _ = mjx.jac(mjx_model, mjx_data, RL_leg, body_id[2])
+    J_RR, _ = mjx.jac(mjx_model, mjx_data, RR_leg, body_id[3])
+
+    # Concatenate the Jacobians into a single matrix
+    J = jnp.concatenate([J_FL, J_FR, J_RL, J_RR], axis=1)
+
     # Concatenate the positions of the legs into a single vector
     current_leg = jnp.concatenate([FL_leg, FR_leg, RL_leg, RR_leg], axis=0)
     st_size = hidden_layer_size_1*input_size + hidden_layer_size_1 + hidden_layer_size_1*hidden_layer_size_2 + hidden_layer_size_2 + output_size
+    grf = contact_model(jnp.concatenate([x[:13+2*n_joints],u]))
     # Update the velocity using the computed forces
-    v = x[n_joints+7:13+2*n_joints] + jax.scipy.linalg.cho_solve((M, False), tau - D + NN(jnp.concatenate([x[:13+2*n_joints]]))) * dt
+    v = x[n_joints+7:13+2*n_joints] + jax.scipy.linalg.cho_solve((M, False), tau - D + J@grf) * dt
 
     # Perform semi-implicit Euler integration to update the position and orientation
     p = x[:3] + v[:3] * dt
@@ -376,6 +376,6 @@ def quadruped_wb_dynamics_learned_contact_model(model, mjx_model, contact_id, bo
     q = x[7:7+n_joints] + v[6:6+n_joints] * dt
 
     # Concatenate the updated state variables into a single vector
-    x_next = jnp.concatenate([p, quat, q, v, current_leg])
+    x_next = jnp.concatenate([p, quat, q, v, current_leg,grf])
 
     return x_next

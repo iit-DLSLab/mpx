@@ -4,7 +4,8 @@ import utils.mpc_utils as mpc_utils
 import utils.models as mpc_dyn_model
 import utils.objectives as mpc_objectives
 import os 
-import sys 
+from functools import partial
+
 dir_path = os.path.dirname(os.path.realpath(__file__))
 model_path = os.path.abspath(os.path.join(dir_path, '..')) + '/data/go2/go2_mjx.xml'  # Path to the MuJoCo model XML file
 # Contact frame names and body names for feet (or calves)
@@ -69,11 +70,9 @@ Qdp   = jnp.diag(jnp.array([1, 1, 1])) * 1e3  # Cost matrix for position derivat
 Qomega= jnp.diag(jnp.array([1, 1, 1])) * 1e2  # Cost matrix for angular velocity
 Qdq   = jnp.diag(jnp.ones(n_joints)) * 1e-2  # Cost matrix for joint angle derivatives
 Qtau  = jnp.diag(jnp.ones(n_joints)) * 1e-1  # Cost matrix for torques
-Q_grf = jnp.diag(jnp.ones(3*n_contact)) * 1e-2  # Cost matrix for ground reaction forces
-# Qswing = jnp.diag(jnp.ones(2*n_contact))*1e1  # Cost matrix for swing foot
+Q_grf = jnp.diag(jnp.ones(3*n_contact)) * 1e-3  # Cost matrix for ground reaction forces
 
 # For the leg contact cost, repeat the unit cost for each contact point.
-# Qleg_unit represents the cost per leg contact, and we tile it for each contact.
 Qleg = jnp.diag(jnp.tile(jnp.array([1e4,1e4,1e5]),n_contact))
 
 # Combine all cost matrices into a block diagonal matrix
@@ -81,9 +80,10 @@ W = jax.scipy.linalg.block_diag(Qp, Qrot, Qq, Qdp, Qomega, Qdq, Qleg, Qtau,Q_grf
 
 use_terrain_estimation = True  # Flag to use terrain estimation
 
-cost = mpc_objectives.quadruped_wb_obj
-hessian_approx = mpc_objectives.quadruped_wb_hessian_gn
+cost = partial(mpc_objectives.quadruped_wb_obj,True)
+hessian_approx = partial(mpc_objectives.quadruped_wb_hessian_gn,True)
 dynamics = mpc_dyn_model.quadruped_wb_dynamics
-
+# dynamics = mpc_dyn_model.quadruped_wb_dynamics_learned_contact_model
+# dynamics = mpc_dyn_model.quadruped_wb_dynamics_explicit_contact
 max_torque = 40
 min_torque = -40

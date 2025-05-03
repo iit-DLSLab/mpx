@@ -302,3 +302,89 @@ def whole_body_interface(model, mjx_model, contact_id, body_id,sim_frequency,Kp,
     tau = tau_mpc*contact_mask + (1-contact_mask)*(tau_PD) + tau_fb_lin
 
     return tau , J
+
+@partial(jax.jit, static_argnums=(0,1,2,3))
+def reference_barell_roll(N,dt,n_joints,n_contact,foot0,q0):
+    t1 = 0.2
+    t2 = 0.2
+    t3 = 0.3
+    t4 = 0.1
+    z_start = 0.4
+    z_land = 0.28
+    v_lateral = -0.25/(t2+t3)
+    v0 = (z_land - z_start + 0.5*9.81*t3*t3)/t3 
+    total_roll_time = t2+t3+t4
+    roll_speed = 2*3.14/total_roll_time
+    def z_position(t):
+        return z_start - 0.5*9.81*t**2 + v0*t
+    def z_speed(t):
+        return -9.81*t + v0
+    acc = v0/t2
+    print("v0", v0)
+    print("acc", acc)
+    #first part full stance 0.1s
+    n1 = int(t1/dt)
+    p1 = jnp.tile(jnp.array([0,0,0.33]), (n1, 1))
+    p1 = p1.at[:,1].set(jnp.arange(n1)*dt*(v_lateral))
+    dp1 = jnp.tile(jnp.array([0,v_lateral,0]), (n1, 1))
+    contact1 = jnp.tile(jnp.array([1,1,1,1]), (n1, 1))
+    quat1 = jnp.tile(jnp.array([1, 0, 0, 0]), (n1, 1))
+    omega1 = jnp.tile(jnp.array([0, 0, 0]), (n1, 1))
+    #second part lateral support 0.2s
+    n2 = int(t2/dt)
+    p2 = jnp.tile(jnp.array([0,p1[-1,1],0.33]), (n2, 1))
+    p2 = p2.at[:,2].set(0.5*jnp.arange(n2)*dt*jnp.arange(n2)*dt*acc + 0.33)
+    p2 = p2.at[:,1].set(jnp.arange(n2)*dt*(v_lateral))
+    dp2 = jnp.tile(jnp.array([0,v_lateral,0]), (n2, 1))
+    dp2 = dp2.at[:,2].set(jnp.arange(n2)*dt*acc)
+    contact2 = jnp.tile(jnp.array([0,1,0,1]), (n2, 1))
+    # for i in range(n2):
+    #     p2 = p2.at[i,2].set(z_position(i*dt))
+    #     dp2 = dp2.at[i,2].set(z_speed(i*dt))
+    #third part flying phase 0.4s
+    n3 = int(t3/dt)
+    p3 = jnp.tile(jnp.array([0,p2[-1,1],p2[-1,2]]), (n3, 1))
+    p3 = p3.at[:,1].set(jnp.arange(n3)*dt*(v_lateral))
+    dp3 = jnp.tile(jnp.array([0,v_lateral,0]), (n3, 1))
+    for i in range(n3):
+        p3 = p3.at[i,2].set(z_position(i*dt))
+        dp3 = dp3.at[i,2].set(z_speed(i*dt))
+    def fn(t,carry):
+        quat_new = math.quat_integrate(carry[t-1,:], jnp.array([roll_speed,0,0]), dt)
+        carry_new = carry.at[t,:].set(quat_new)
+        return carry_new
+    
+    
+    contact3 = jnp.tile(jnp.array([0,0,0,0]), (n3, 1))
+    #fourth part full stance 0.2s
+    n4 = int(t4/dt)
+    p4 = jnp.tile(jnp.array([0,p3[-1,1],z_land]), (n4, 1))
+    dp4 = jnp.tile(jnp.array([0,0,0]), (n4, 1))
+    quat5 = jnp.tile(jnp.array([1, 0, 0, 0]), (n4, 1))
+    omega5 = jnp.tile(jnp.array([0, 0, 0]), (n4, 1))
+    contact4 = jnp.tile(jnp.array([1,1,1,1]), (n4, 1))
+
+    init_carry = jnp.tile(jnp.array([1.0, 0.0, 0, 0]), (n2+n3+n4, 1))
+    quat234 = jax.lax.fori_loop(1, n2+n3+n4, fn, init_carry)
+    omega234 = jnp.tile(jnp.array([roll_speed, 0, 0]), (n2+n3+n4, 1))
+
+    n5 = N - (n1+n2+n3+n4)
+
+    p5 = jnp.tile(jnp.array([0,p4[-1,1],z_land]), (n5, 1))
+    dp5 = jnp.tile(jnp.array([0,0,0]), (n5, 1))
+    quat5 = jnp.tile(jnp.array([1, 0, 0, 0]), (n5, 1))
+    omega5 = jnp.tile(jnp.array([0, 0, 0]), (n5, 1))
+    contact5 = jnp.tile(jnp.array([1,1,1,1]), (n5, 1))
+
+    p_ref = jnp.concatenate([p1, p2, p3, p4,p5], axis=0)
+    quat_ref = jnp.concatenate([quat1,quat234,quat5], axis=0)
+    q_ref = jnp.tile(q0, (n1+n2+n3+n4+n5, 1))
+    dp_ref = jnp.concatenate([dp1, dp2, dp3, dp4,dp5], axis=0)
+    omega_ref = jnp.concatenate([omega1,omega234,omega5], axis=0)
+    foot_ref = jnp.tile(foot0, (n1+n2+n3+n4+n5, 1)) + jnp.tile(p_ref, n_contact)
+    foot_ref = foot_ref.at[:,2::3].set(jnp.zeros((n1+n2+n3+n4+n5, n_contact)))
+    contact_sequence = jnp.concatenate([contact1, contact2, contact3, contact4,contact5], axis=0)
+
+    grf_ref = jnp.zeros((N, 3*n_contact))
+
+    return jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref, foot_ref, contact_sequence, grf_ref], axis=1), jnp.concatenate([contact_sequence, foot_ref], axis=1)
