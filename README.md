@@ -1,5 +1,12 @@
-# mpx
+# MPX
 Model Predictive Control in JAX
+
+This repo implements the code for legged robot mpc and trajectory Optimization all in jax. 
+
+ The solver is wrapped by the `MPCControllerWrapper` class, and all the settings (such as the dynamics model and cost function to be used) can be changed in the config files. Examples for various legged robot are provided in the `examples` folder.
+> **Note:**  
+> If you want to solve multile MPC in parallel use `BatchedMPCControllerWrapper`
+
 ## Installation
 
 ### Set Up Conda Environment

@@ -1,11 +1,7 @@
 import os
- 
-# Set environment variables for XLA flags
-#os.environ['XLA_FLAGS'] = (
-#    '--xla_gpu_enable_triton_softmax_fusion=true '
-#    '--xla_gpu_triton_gemm_any=true '
-    # '--xla_gpu_deterministic_ops=true'
-#)
+import sys
+dir_path = os.path.dirname(os.path.realpath(__file__))
+sys.path.append(os.path.abspath(os.path.join(dir_path, '..')))
 import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
@@ -70,10 +66,6 @@ for i in range(config.N*12):
               np.array([1, 0, 0, 1])))
 counter = 0
 # Main simulation loop
-tau = jnp.zeros(config.n_joints)
-tau_old = jnp.zeros(config.n_joints)
-delay = int(0.015*sim_frequency)
-print('Delay: ',delay)
 q = config.q0.copy()
 dq = jnp.zeros(config.n_joints)
 mpc_time = 0

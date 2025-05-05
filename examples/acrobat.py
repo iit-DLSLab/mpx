@@ -1,11 +1,7 @@
 import os
-# os.environ['XLA_FLAGS'] = (
-    # '--xla_gpu_enable_triton_softmax_fusion=true '
-    # '--xla_gpu_triton_gemm_any=True '
-    # '--xla_gpu_enable_async_collectives=true '
-    # '--xla_gpu_enable_latency_hiding_scheduler=true '
-    # '--xla_gpu_enable_highest_priority_async_stream=true '
-# )
+import sys
+dir_path = os.path.dirname(os.path.realpath(__file__))
+sys.path.append(os.path.abspath(os.path.join(dir_path, '..')))
 os.environ.update({
   "NCCL_LL128_BUFFSIZE": "-2",
   "NCCL_LL_BUFFSIZE": "-2",
@@ -43,7 +39,7 @@ dt = 0.01  # Time step
 parameter = jnp.zeros(N+1)
 reference = jnp.zeros(N+1)
 
-def dynamics(x, u,t,parameter):
+def dynamics(x,u,t,parameter):
     del t
     theta1_dot = x[0]
     theta2_dot = x[1]
@@ -86,33 +82,39 @@ R = jnp.diag(jnp.array([ 1e-4/dt]))
 Q_f = jnp.diag(jnp.array([10.0, 10.0, 100.0, 100.0]))
 
 @jax.jit
-def cost(x, u,t,reference):
-    alpha = 0.1
-    sigma = 5
-    torque_limit = 5*jnp.ones_like(u) - u
-    quadratic_barrier = alpha/2*(jnp.square((u-2*sigma)/sigma)-jnp.ones_like(torque_limit))
-    log_barrier = -alpha*jnp.log(torque_limit)
-    torque_limit = jnp.where(torque_limit>sigma,log_barrier,quadratic_barrier+log_barrier)
-    stage_cost = (x-x_ref).T @ Q @ (x-x_ref) + (u-u_ref).T @ R @ (u-u_ref) + jnp.sum(torque_limit)
+def cost(W,reference,x,u,t):
+    stage_cost = (x-x_ref).T @ Q @ (x-x_ref) + (u-u_ref).T @ R @ (u-u_ref)
     term_cost = (x-x_ref).T @ Q_f @ (x-x_ref)
     return jnp.where(t == N, 0.5 * term_cost, 0.5 * stage_cost)
 
+hessian_x = jax.hessian(cost, argnums=2)
+hessian_u = jax.hessian(cost, argnums=3)
+hessian_x_u = jax.jacobian(jax.grad(cost,argnums=2), argnums=3)
+
+def hessian_approx(*args):
+  return hessian_x(*args), hessian_u(*args), hessian_x_u(*args)
 # Solve
 x0 = pos_0
 U0 = jnp.tile(u_ref, (N, 1))
 X0 = jnp.tile(x0, (N + 1, 1))
 V0 = jnp.zeros((N+ 1, n))
+W = jnp.zeros((N,1))
 from timeit import default_timer as timer
 
-
+penalty = 1
+V_equality = jnp.zeros((N+1, 1))
+V_inequality = jnp.zeros((N+1, 2))
+tol = 1e-5
 @jax.jit
-def work(x0,X0,U0,V0):
+def work(x0,X0,U0,V0,W):
     return optimizers.mpc(
         cost,
         dynamics,
+        hessian_approx,
         False,
         reference,
         parameter,
+        W,
         x0,
         X0,
         U0,
@@ -145,10 +147,15 @@ def update_plot(x1, y1, x2, y2, x1f, y1f, x2f, y2f, x1hf, y1hf, x2hf, y2hf):
     display(fig)
     clear_output(wait=True)
     plt.pause(dt)
+
 u_history = []
 while True:
+    
     x0 = jittedDynamics(x0,U0[0],0,parameter)
-    X0,U0,V0 = work(x0,X0,U0,V0)
+    X,U,V = work(x0,X0,U0,V0,W)
+    U0 = jnp.concatenate([U[1:], jnp.tile(U[-1:], (1, 1))])
+    X0 = jnp.concatenate([X[1:], jnp.tile(X[-1:], (1, 1))])
+    V0 = jnp.concatenate([V[1:], jnp.tile(V[-1:], (1, 1))])
     u_history.append(U0[0])
     x1 = l1 * jnp.sin(x0[2])
     y1 = -l1 * jnp.cos(x0[2])

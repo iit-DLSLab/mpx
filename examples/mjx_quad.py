@@ -1,4 +1,7 @@
-import os 
+import os
+import sys
+dir_path = os.path.dirname(os.path.realpath(__file__))
+sys.path.append(os.path.abspath(os.path.join(dir_path, '..')))
 import jax.numpy as jnp
 import jax
 import mujoco
@@ -24,7 +27,7 @@ from timeit import default_timer as timer
 # jax.default_device(gpu_device)
  
 # Define robot and scene parameters
-robot_name = "go2"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
+robot_name = "aliengo"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
 scene_name = "flat"
 robot_feet_geom_names = dict(FR='FR',FL='FL', RR='RR' , RL='RL')
 robot_leg_joints = dict(FR=['FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint', ],
@@ -60,7 +63,7 @@ counter = 0
 # Main simulation loop
 tau = jnp.zeros(config.n_joints)
 tau_old = jnp.zeros(config.n_joints)
-delay = int(0.0*sim_frequency)
+delay = int(0.015*sim_frequency)
 print('Delay: ',delay)
 q = config.q0.copy()
 dq = jnp.zeros(config.n_joints)
@@ -98,49 +101,7 @@ while env.viewer.is_running():
 
         stop = timer()
 
-        # tau = U[0,:config.n_joints]
-        # for leg in range(config.n_contact):
-        #     pleg = reference[:,13+config.n_joints:]
-        #     for i in range(config.N):
-        #         render_sphere(viewer=env.viewer,
-        #                   position = pleg[i,3*leg:3+3*leg],
-        #                   diameter = 0.01,
-        #                   color=[0,1,0,1],
-        #                   geom_id = ids[leg*config.N+i])
-        # for i in range(config.N):
-        #     render_sphere(viewer=env.viewer,
-        #                   position = reference[i,:3],
-        #                   diameter = 0.01,
-        #                   color=[0,1,0,1],
-        #                   geom_id = ids[config.N*config.n_contact+config.N+i])
-        # time.sleep(1)
-        # grf = X[1,13+2*config.n_joints+3*config.n_contact:]
-        # for c in range(config.n_contact):
-        #         render_vector(env.viewer,
-        #               grf[3*c:3*(c+1)],
-        #               foot_op_vec[3*c:3*(c+1)],
-        #               np.linalg.norm(grf[3*c:3*(c+1)])/500,
-        #               np.array([1, 0, 0, 1]),
-        #               ids[c])
-        # tau_val = U[:4,:config.n_joints]
-        # high_freq_counter = 0
-        
-    # if counter % (sim_frequency * config.dt) == 0 or counter == 0:
-    #         tau = tau_val[high_freq_counter,:]
-    #         high_freq_counter += 1
-
     tau_fb = -3*(qvel[6:6+config.n_joints])
     state, reward, is_terminated, is_truncated, info = env.step(action= tau + tau_fb)
-    # mujoco.mj_step(env.mjModel, env.mjData)
     counter += 1
-    
-    # if False:
-    #     env.reset(random=False)
-    #     timer_t = jnp.array([0000.5,0000.0,0000,0000.5])
-    #     liftoff = config.p_legs0.copy()
-    #     counter = 0
-    #     x0 = jnp.concatenate([config.p0, config.quat0,config.q0, jnp.zeros(6+config.n_joints),config.p_legs0,jnp.zeros(3*config.n_contact)])
-    #     U0 = jnp.tile(config.u_ref, (config.N, 1))
-    #     X0 = jnp.tile(x0, (config.N + 1, 1))
-    #     V0 = jnp.zeros((config.N + 1, config.n ))
     env.render()

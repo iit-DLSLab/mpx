@@ -288,15 +288,15 @@ def quadruped_wb_dynamics_explicit_contact(model, mjx_model, contact_id, body_id
 
     return x_next
 
-from functools import partial
-import pickle
-# Load parameters from a pickle file
-def load_params(file_path):
-    with open(file_path, "rb") as f:
-        params = pickle.load(f)
-    return params
-params_file_path = "./trained_params.pkl"
-params = load_params(params_file_path)
+# from functools import partial
+# import pickle
+# # Load parameters from a pickle file
+# def load_params(file_path):
+#     with open(file_path, "rb") as f:
+#         params = pickle.load(f)
+#     return params
+# params_file_path = "./trained_params.pkl"
+# params = load_params(params_file_path)
 
 def quadruped_wb_dynamics_learned_contact_model(model, mjx_model, contact_id, body_id, n_joints, dt, x, u, t, parameter):
     """
@@ -367,6 +367,8 @@ def quadruped_wb_dynamics_learned_contact_model(model, mjx_model, contact_id, bo
     current_leg = jnp.concatenate([FL_leg, FR_leg, RL_leg, RR_leg], axis=0)
     st_size = hidden_layer_size_1*input_size + hidden_layer_size_1 + hidden_layer_size_1*hidden_layer_size_2 + hidden_layer_size_2 + output_size
     grf = contact_model(jnp.concatenate([x[:13+2*n_joints],u]))
+    contact = parameter[t, :4]
+    grf = jnp.concatenate([grf[:3]*contact[0], grf[3:6]*contact[1], grf[6:9]*contact[2], grf[9:12]*contact[3]])
     # Update the velocity using the computed forces
     v = x[n_joints+7:13+2*n_joints] + jax.scipy.linalg.cho_solve((M, False), tau - D + J@grf) * dt
 
