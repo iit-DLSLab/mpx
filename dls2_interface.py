@@ -39,7 +39,7 @@ class mpx:
     self.mpc.duty_factor = 1.0
 
     # Interactive Command Line ----------------------------
-    from console import Console
+    from utils.console import Console
     self.console = Console(controller_node=self)
     thread_console = threading.Thread(target=self.console.interactive_command_line)
     thread_console.daemon = True
@@ -47,7 +47,7 @@ class mpx:
 
     self.isDown = True
     self.tau_old = np.zeros(config.n_joints)
-    # jax.config.update('jax_platform_name', 'cpu')
+
   def run(self):
 
     start = timer()

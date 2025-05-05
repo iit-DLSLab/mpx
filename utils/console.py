@@ -25,8 +25,8 @@ class Console():
 
         # Autocomplete setup
         self.commands = [
-            "stw", "ooo", "setGaitTimer", 
-            "setup", "goUp", "goDown", "help", "ictp","setupGaitTimer"
+            "stw", "ooo", "setStepHeight",
+           "goUp", "goDown", "help", "ictp","setupGaitTimer"
         ]
         readline.set_completer(self.complete)
         readline.parse_and_bind("tab: complete")
@@ -58,6 +58,8 @@ class Console():
                     self.walking = False
                     # self.controller_node.mpc.walking = False
                     self.controller_node.mpc.duty_factor = 1
+                    self.controller_node.mpc.contact_time = self.controller_node.mpc.config.timer_t
+                    self.controller_node.mpc.input[:6] = np.zeros(6)
                     ##TO DO stop walking
                 elif(input_string == "goUp"):
                     print("Going Up")

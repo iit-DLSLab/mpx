@@ -7,7 +7,7 @@ import os
 from functools import partial
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
-model_path = os.path.abspath(os.path.join(dir_path, '..')) + '/data/go2/go2_mjx.xml'  # Path to the MuJoCo model XML file
+model_path = os.path.abspath(os.path.join(dir_path, '..')) + '/data/aliengo/aliengo.xml'  # Path to the MuJoCo model XML file
 # Contact frame names and body names for feet (or calves)
 contact_frame = ['FL', 'FR', 'RL', 'RR']
 body_name = ['FL_calf', 'FR_calf', 'RL_calf', 'RR_calf']
@@ -24,34 +24,34 @@ step_freq = 1.35   # Step frequency in Hz
 step_height = 0.12 # Step height in meters
 initial_height = 0.1  # Initial height of the robot's base in meters
 #aliengo
-# robot_height = 0.33  # Height of the robot's base in meters
+robot_height = 0.33  # Height of the robot's base in meters
 #go2
-robot_height = 0.27  # Height of the robot's base in meters
+# robot_height = 0.27  # Height of the robot's base in meters
 
 # Initial positions, orientations, and joint angles
 p0 = jnp.array([0, 0, robot_height])  # Initial position of the robot's base
 quat0 = jnp.array([1, 0, 0, 0])  # Initial orientation of the robot's base (quaternion)
 #alingo
-# q0 = jnp.array([0.2, 0.8, -1.8, -0.2, 0.8, -1.8, 0.2, 0.8, -1.8, -0.2, 0.8, -1.8])  # Initial joint angles
-# q0_init = jnp.array([-0.2, 0.8, -1.8, -0.2, 0.8, -1.8, -0.2, 0.8, -1.8, -0.2, 0.8, -1.8])
+q0 = jnp.array([0.2, 0.8, -1.8, -0.2, 0.8, -1.8, 0.2, 0.8, -1.8, -0.2, 0.8, -1.8])  # Initial joint angles
+q0_init = jnp.array([-0.2, 0.8, -1.8, -0.2, 0.8, -1.8, -0.2, 0.8, -1.8, -0.2, 0.8, -1.8])
 #go2       
-q0 = jnp.array([0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8])  # Initial joint angles
-q0_init = jnp.array([0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8])
+# q0 = jnp.array([0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8])  # Initial joint angles
+# q0_init = jnp.array([0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8])
 
 #alingo
-# p_legs0 = jnp.array([
-#     0.27092872, 0.174, .0,  # Initial position of the front left leg
-#     0.27092872, -0.174, .0, # Initial position of the front right leg
-#    -0.20887128, 0.174, .0,  # Initial position of the rear left leg
-#    -0.20887128, -0.174  , .0   # Initial position of the rear right leg
-# ])
-#go2
 p_legs0 = jnp.array([
-    0.192, 0.142, .0,  # Initial position of the front left leg
-    0.192, -0.142, .0, # Initial position of the front right leg
-   -0.195, 0.142, .0,  # Initial position of the rear left leg
-   -0.195, -0.142, .0  # Initial position of the rear right leg
+    0.27092872, 0.174, .0,  # Initial position of the front left leg
+    0.27092872, -0.174, .0, # Initial position of the front right leg
+   -0.20887128, 0.174, .0,  # Initial position of the rear left leg
+   -0.20887128, -0.174  , .0   # Initial position of the rear right leg
 ])
+#go2
+# p_legs0 = jnp.array([
+#     0.192, 0.142, .0,  # Initial position of the front left leg
+#     0.192, -0.142, .0, # Initial position of the front right leg
+#    -0.195, 0.142, .0,  # Initial position of the rear left leg
+#    -0.195, -0.142, .0  # Initial position of the rear right leg
+# ])
 
 # Determine number of joints and contacts from the lists
 n_joints = 12  # Number of joints
@@ -66,7 +66,7 @@ u_ref = jnp.zeros(m)  # Reference controls (concatenated torques)
 Qp    = jnp.diag(jnp.array([0, 0, 1e4]))  # Cost matrix for position
 Qrot  = jnp.diag(jnp.array([1000, 1000, 0]))  # Cost matrix for rotation
 Qq    = jnp.diag(jnp.ones(n_joints)) * 1e-2  # Cost matrix for joint angles
-Qdp   = jnp.diag(jnp.array([1, 1, 1])) * 1e3  # Cost matrix for position derivatives
+Qdp   = jnp.diag(jnp.array([1, 1, 1])) * 5e3  # Cost matrix for position derivatives
 Qomega= jnp.diag(jnp.array([1, 1, 1])) * 1e2  # Cost matrix for angular velocity
 Qdq   = jnp.diag(jnp.ones(n_joints)) * 1e-2  # Cost matrix for joint angle derivatives
 Qtau  = jnp.diag(jnp.ones(n_joints)) * 1e-1  # Cost matrix for torques
