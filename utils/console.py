@@ -67,12 +67,12 @@ class Console():
                     time_motion = 5.
                     initial_height = self.controller_node.mpc.robot_height
                     delta_height = self.controller_node.mpc.config.robot_height - initial_height
-                    print("Initial Height: ", initial_height)
                     while(time.time() - start_time < time_motion):
                         time_diff = time.time() - start_time
                         self.controller_node.mpc.robot_height = initial_height + ( delta_height * time_diff / time_motion)
                         time.sleep(0.01)
                     self.controller_node.isDown = False
+                    print("Ready to walk")
                 elif(input_string == "goDown"):
                     print("Going Up")
                     start_time = time.time()
