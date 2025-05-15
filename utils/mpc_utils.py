@@ -12,11 +12,13 @@ def timer_run(duty_factor,step_freq, leg_time, dt):
     contact = jnp.where(leg_time < duty_factor, 1, 0)
 
     return contact, leg_time
-def terrain_orientation(liftoff_pos):
+def terrain_orientation(liftoff_pos,Ryaw):
 
     # Calculate the vectors between the legs
     vec_front_back = (liftoff_pos[:3] + liftoff_pos[3:6] - liftoff_pos[6:9] - liftoff_pos[9:12])/2
-    vec_left_right = (liftoff_pos[:3] + liftoff_pos[6:9] - liftoff_pos[3:6] - liftoff_pos[9:12])/2
+    # vec_left_right = (liftoff_pos[:3] + liftoff_pos[6:9] - liftoff_pos[3:6] - liftoff_pos[9:12])/2
+    #DO NOT ADJUST THE ROLL
+    vec_left_right = Ryaw@jnp.array([0,1,0])
     # Compute the normal vector to the plane
     normal_vector = jnp.cross(vec_front_back, vec_left_right)
 
@@ -42,18 +44,19 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0
     # omega = x[10+n_joints:13+n_joints]
     # dq = x[13+n_joints:13+2*n_joints]
     # proprio_height = input[6] + jnp.sum(contact*foot[2::3])/jnp.sum(contact)
+    yaw = jnp.arctan2(2*(quat[0]*quat[3] + quat[1]*quat[2]), 1 - 2*(quat[2]*quat[2] + quat[3]*quat[3]))
+    Ryaw = jnp.array([[jnp.cos(yaw), -jnp.sin(yaw), 0],[jnp.sin(yaw), jnp.cos(yaw), 0],[0, 0, 1]])
     proprio_height = input[6] + jnp.sum(liftoff[2::3])/n_contact
     p = jnp.array([p[0], p[1], proprio_height])
     if use_terrain_estimator:
-        quat_ref = jnp.tile(terrain_orientation(liftoff), (N+1, 1))
+        quat_ref = jnp.tile(terrain_orientation(liftoff,Ryaw), (N+1, 1))
     else:
         quat_ref = jnp.tile(jnp.array([1, 0, 0, 0]), (N+1, 1))
     q_ref = jnp.tile(q0, (N+1, 1))
     contact_sequence = jnp.zeros(((N+1), n_contact))
     pitch = jnp.arcsin(2 * (quat_ref[0,0] * quat_ref[0,2] - quat_ref[0,3] * quat_ref[0,1]))
     Rpitch = jnp.array([[jnp.cos(pitch), 0, jnp.sin(pitch)], [0, 1, 0], [-jnp.sin(pitch), 0, jnp.cos(pitch)]])
-    yaw = jnp.arctan2(2*(quat[0]*quat[3] + quat[1]*quat[2]), 1 - 2*(quat[2]*quat[2] + quat[3]*quat[3]))
-    Ryaw = jnp.array([[jnp.cos(yaw), -jnp.sin(yaw), 0],[jnp.sin(yaw), jnp.cos(yaw), 0],[0, 0, 1]])
+    
     ref_lin_vel = Ryaw@Rpitch@input[:3]
     ref_ang_vel = input[3:6]
     p_ref_x = jnp.arange(N+1) * dt * ref_lin_vel[0] + p[0]
