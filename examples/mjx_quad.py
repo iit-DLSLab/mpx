@@ -85,23 +85,27 @@ while env.viewer.is_running():
                            ref_base_ang_vel[0],ref_base_ang_vel[1],ref_base_ang_vel[2],
                            config.robot_height])
         
+        contact_temp, _ = env.feet_contact_state()
+        
+        contact = np.array([contact_temp[robot_feet_geom_names[leg]] for leg in ['FL','FR','RL','RR']])
+
         if counter != 0:
             for i in range(delay):
                 qpos = env.mjData.qpos.copy()
                 qvel = env.mjData.qvel.copy()
                 # tau_fb = K@(x-np.concatenate([qpos,qvel]))
 
-                tau_fb = -3*(qvel[6:6+config.n_joints])
+                tau_fb = 10*(q-qpos[7:7+config.n_joints]) -3*(qvel[6:6+config.n_joints])
                 state, reward, is_terminated, is_truncated, info = env.step(action=tau + tau_fb)
                 counter += 1
         start = timer()
-        tau, q, dq = mpc.run(qpos,qvel,input)   
+        tau, q, dq = mpc.run(qpos,qvel,input,contact)   
         stop = timer()
         print("Time taken for MPC: ", stop-start)   
 
         stop = timer()
 
-    tau_fb = -3*(qvel[6:6+config.n_joints])
+    tau_fb = 10*(q-qpos[7:7+config.n_joints])-3*(qvel[6:6+config.n_joints])
     state, reward, is_terminated, is_truncated, info = env.step(action= tau + tau_fb)
     counter += 1
     env.render()

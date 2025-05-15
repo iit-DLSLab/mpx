@@ -251,7 +251,7 @@ class MPCControllerWrapper:
                 new_V0 = jnp.concatenate([V[shift:], jnp.tile(V[-1:], (shift, 1))])
                 tau = U[0, :n_joints]
                 q = X[0, 7:n_joints + 7]
-                dq = X[0, 13 + n_joints:2 * n_joints + 13]
+                dq = X[1, 13 + n_joints:2 * n_joints + 13]
                 return new_U0, new_X0, new_V0,tau,q ,dq
             def unsafe_update():
                 new_U0 = jnp.tile(self.config.u_ref, (self.config.N, 1))
