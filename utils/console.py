@@ -56,7 +56,11 @@ class Console():
                 elif(input_string == "ooo"):
                     print("Stopping Walking")
                     self.walking = False
+                    counter = 0
                     # self.controller_node.mpc.walking = False
+                    while(np.sum(self.controller_node.mpc.contact) != 4 and counter < 25):
+                        counter += 1
+                        time.sleep(0.02)
                     self.controller_node.mpc.duty_factor = 1
                     self.controller_node.mpc.contact_time = self.controller_node.mpc.config.timer_t
                     self.controller_node.mpc.input[:6] = np.zeros(6)
