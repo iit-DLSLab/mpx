@@ -272,8 +272,8 @@ class MPCControllerWrapper:
         self.robot_height = config.initial_height
         self.tau0 = np.zeros(config.n_joints)
         self.start_time = 0
-    
-    def run(self, qpos, qvel, input):
+        self.contact = np.zeros(config.n_contact)
+    def run(self, qpos, qvel, input,contact):
         """
         Runs one MPC update using the current state, input, and foot positions.
         
@@ -286,11 +286,11 @@ class MPCControllerWrapper:
             A tuple (X, U, V) representing the computed state trajectory, control sequence,
             and auxiliary variable trajectory.
         """
-        #compensate for the time delay
+        self.contact = contact.copy()
         #get forward kinematics for foot position 
        
         self.data.qpos = qpos 
-       
+        
         mujoco.mj_kinematics(self.model, self.data)
         foot_op = np.array([self.data.geom_xpos[self.contact_id[i]] for i in range(self.config.n_contact)])
         #set initial state
@@ -302,8 +302,11 @@ class MPCControllerWrapper:
             x0 = jnp.concatenate([qpos, qvel,foot_op.flatten()])
 
         input = jnp.array(input)
+        contact = jnp.array(contact)
+
         # Update the timer state for the gait reference.
         _ , self.contact_time = self._timer_run(self.duty_factor,self.step_freq,self.contact_time,1/self.mpc_frequency)
+
         # Generate reference trajectory and additional MPC parameters.
         reference, parameter, self.liftoff = self._ref_gen(
             duty_factor = self.duty_factor,
@@ -314,6 +317,7 @@ class MPCControllerWrapper:
             foot = foot_op.flatten(),
             input = input,
             liftoff = self.liftoff,
+            contact = contact,
         )
         
         # Execute the MPC optimization.
