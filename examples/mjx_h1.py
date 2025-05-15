@@ -85,8 +85,12 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             input = np.array([ref_base_lin_vel[0],ref_base_lin_vel[1],ref_base_lin_vel[2],
                            ref_base_ang_vel[0],ref_base_ang_vel[1],ref_base_ang_vel[2],
                            1.0])
+            
+            #set this to the current contact state to use the blind step adaptation
+            contact = np.zeros(config.n_contact)
+
             start = timer()
-            tau, q, dq = mpc.run(qpos,qvel,input)   
+            tau, q, dq = mpc.run(qpos,qvel,input,contact)   
             stop = timer()
             print(f"Time elapsed: {stop-start}")            
         counter += 1        
