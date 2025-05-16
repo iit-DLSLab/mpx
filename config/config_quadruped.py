@@ -24,7 +24,7 @@ step_freq = 1.35   # Step frequency in Hz
 step_height = 0.12 # Step height in meters
 initial_height = 0.1  # Initial height of the robot's base in meters
 #aliengo
-robot_height = 0.33  # Height of the robot's base in meters
+robot_height = 0.36  # Height of the robot's base in meters
 #go2
 # robot_height = 0.27  # Height of the robot's base in meters
 
@@ -85,5 +85,5 @@ hessian_approx = partial(mpc_objectives.quadruped_wb_hessian_gn,True)
 dynamics = mpc_dyn_model.quadruped_wb_dynamics
 # dynamics = mpc_dyn_model.quadruped_wb_dynamics_learned_contact_model
 # dynamics = mpc_dyn_model.quadruped_wb_dynamics_explicit_contact
-max_torque = 40
-min_torque = -40
+max_torque = 35
+min_torque = -35

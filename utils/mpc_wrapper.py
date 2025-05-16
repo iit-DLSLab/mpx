@@ -273,6 +273,8 @@ class MPCControllerWrapper:
         self.tau0 = np.zeros(config.n_joints)
         self.start_time = 0
         self.contact = np.zeros(config.n_contact)
+        # self.obstacle_timer = 0
+        self.clearence_speed = 0.4 #* jnp.ones(config.n_contact)
     def run(self, qpos, qvel, input,contact):
         """
         Runs one MPC update using the current state, input, and foot positions.
@@ -292,20 +294,20 @@ class MPCControllerWrapper:
         self.data.qpos = qpos 
         
         mujoco.mj_kinematics(self.model, self.data)
-        foot_op = np.array([self.data.geom_xpos[self.contact_id[i]] for i in range(self.config.n_contact)])
+        foot_op = np.array([self.data.geom_xpos[self.contact_id[i]] for i in range(self.config.n_contact)]).flatten()
         #set initial state
         input[6] = self.robot_height
 
         if self.config.grf_as_state:
-            x0 = jnp.concatenate([qpos, qvel,foot_op.flatten(),jnp.zeros(3*self.config.n_contact)])
+            x0 = jnp.concatenate([qpos, qvel,foot_op,jnp.zeros(3*self.config.n_contact)])
         else:
-            x0 = jnp.concatenate([qpos, qvel,foot_op.flatten()])
+            x0 = jnp.concatenate([qpos, qvel,foot_op])
 
         input = jnp.array(input)
         contact = jnp.array(contact)
 
         # Update the timer state for the gait reference.
-        _ , self.contact_time = self._timer_run(self.duty_factor,self.step_freq,self.contact_time,1/self.mpc_frequency)
+        des_contact , self.contact_time = self._timer_run(self.duty_factor,self.step_freq,self.contact_time,1/self.mpc_frequency)
 
         # Generate reference trajectory and additional MPC parameters.
         reference, parameter, self.liftoff = self._ref_gen(
@@ -314,10 +316,11 @@ class MPCControllerWrapper:
             step_height = self.step_height,
             t_timer = self.contact_time.copy(),
             x = x0,
-            foot = foot_op.flatten(),
+            foot = foot_op,
             input = input,
             liftoff = self.liftoff,
             contact = contact,
+            clearence_speed = self.clearence_speed,
         )
         
         # Execute the MPC optimization.

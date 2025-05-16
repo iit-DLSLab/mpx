@@ -36,7 +36,7 @@ def terrain_orientation(liftoff_pos,Ryaw):
     return jnp.roll(quat,1)
 
 @partial(jax.jit, static_argnums=(0,1,2,3,4,5))
-def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff,contact):
+def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff,contact,clearence_speed):
     p = x[:3]
     quat = x[3:7]
     # q = x[7:7+n_joints]
@@ -71,7 +71,7 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0
 
     #Estimate Early contact
     des_contact, current_timer = timer_run(duty_factor, step_freq, t_timer, dt)
-    early_contact = jnp.where(jnp.logical_and(jnp.logical_and(des_contact==0,contact==1),current_timer > duty_factor*1.1),1,0)    
+    early_contact = jnp.where(jnp.logical_and(jnp.logical_and(des_contact==0,contact==1),current_timer > 0.5 + 0.5*duty_factor),1,0)    
 
     def foot_fn(t,carry):
 
@@ -99,11 +99,11 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0
         foothold_x = calc_foothold(0)
         foothold_y = calc_foothold(1)
 
-        def cubic_splineXY(current_foot, foothold,val):
+        def cubic_splineXY(current_foot, foothold,initial_velocity,val):
             a0 = current_foot
-            a1 = 0
-            a2 = 3*(foothold - current_foot)
-            a3 = -2/3*a2
+            a1 = initial_velocity
+            a2 = 3*(foothold - current_foot) - 2*initial_velocity
+            a3 = initial_velocity - 2*(foothold - current_foot)
             return a0 + a1*val + a2*val**2 + a3*val**3
 
         def cubic_splineZ(current_foot, foothold, step_height,val):
@@ -113,8 +113,10 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0
             a1 = +2*foothold -2*a0 +a3
             return a0 + a1*val + a2*val**2 + a3*val**3
         
-        new_foot_x = jnp.where(jnp.logical_or(new_contact_sequence>0,early_contact==1), new_foot[t-1,::3], cubic_splineXY(liftoff_x, foothold_x,(new_t-duty_factor)/(1-duty_factor)))
-        new_foot_y = jnp.where(jnp.logical_or(new_contact_sequence>0,early_contact==1), new_foot[t-1,1::3], cubic_splineXY(liftoff_y, foothold_y,(new_t-duty_factor)/(1-duty_factor)))
+        initial_speed = - ref_lin_vel / (jnp.linalg.norm(ref_lin_vel) + 1e-6) * clearence_speed
+
+        new_foot_x = jnp.where(jnp.logical_or(new_contact_sequence>0,early_contact==1), new_foot[t-1,::3], cubic_splineXY(liftoff_x, foothold_x,initial_speed[0],(new_t-duty_factor)/(1-duty_factor)))
+        new_foot_y = jnp.where(jnp.logical_or(new_contact_sequence>0,early_contact==1), new_foot[t-1,1::3], cubic_splineXY(liftoff_y, foothold_y,initial_speed[1],(new_t-duty_factor)/(1-duty_factor)))
         new_foot_z = jnp.where(jnp.logical_or(new_contact_sequence>0,early_contact==1), new_foot[t-1,2::3], cubic_splineZ(liftoff_z,liftoff_z,liftoff_z + step_height,(new_t-duty_factor)/(1-duty_factor)))
 
         new_foot = new_foot.at[t,::3].set(new_foot_x)
