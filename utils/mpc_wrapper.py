@@ -228,8 +228,6 @@ class MPCControllerWrapper:
         
         reference_generator = partial(mpc_utils.reference_generator,
             config.use_terrain_estimation ,config.N, config.dt, config.n_joints, config.n_contact, robot_mass,foot0 = config.p_legs0, q0 = config.q0)
-        
-        timer_t = partial(mpc_utils.timer_run, duty_factor=config.duty_factor, step_freq=config.step_freq)
 
         self._solve = jax.jit(work)
         self._ref_gen = jax.jit(reference_generator)
