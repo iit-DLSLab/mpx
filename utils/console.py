@@ -56,12 +56,11 @@ class Console():
                 elif(input_string == "ooo"):
                     print("Stopping Walking")
                     self.walking = False
-                    # self.controller_node.mpc.walking = False
                     while(np.sum(self.controller_node.mpc.contact) != 4):
                         time.sleep(0.02)
-                    self.controller_node.mpc.duty_factor = 1
+                    self.controller_node.mpc.duty_factor = 1.0
                     self.controller_node.mpc.contact_time = self.controller_node.mpc.config.timer_t
-                    self.controller_node.reset()
+
                     ##TO DO stop walking
                 elif(input_string == "goUp"):
                     print("Going Up")
