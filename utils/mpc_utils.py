@@ -107,11 +107,21 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0
             return a0 + a1*val + a2*val**2 + a3*val**3
 
         def cubic_splineZ(current_foot, foothold, step_height,val):
-            a0 = current_foot
-            a3 = 8*step_height - 6*foothold -2*a0
-            a2 = -foothold +a0 -2*a3
-            a1 = +2*foothold -2*a0 +a3
-            return a0 + a1*val + a2*val**2 + a3*val**3
+            
+            initial_speed = 0.2
+
+            a = 16*step_height - 8*foothold - 8*current_foot - 2*initial_speed
+            b = 5*initial_speed + 14*foothold + 18*current_foot - 32*step_height
+            c = 16*step_height - 5*foothold - 11*current_foot - 4*initial_speed
+            d = initial_speed
+            e = current_foot
+            
+            # a0 = current_foot
+            # a3 = 8*step_height - 6*foothold -2*a0
+            # a2 = -foothold +a0 -2*a3
+            # a1 = +2*foothold -2*a0 +a3
+            # return a0 + a1*val + a2*val**2 + a3*val**3
+            return a*val**4 + b*val**3 + c*val**2 + d*val + e
         
         initial_speed = - ref_lin_vel / (jnp.linalg.norm(ref_lin_vel) + 1e-6) * clearence_speed
 
