@@ -391,12 +391,16 @@ class MPCControllerWrapper:
         
 
         reference, parameter = self.config.reference(self.config.N + 1,self.config.dt,self.config.n_joints,self.config.n_contact,self.config.p_legs0,self.config.q0)
+        
+        reference = jnp.array(reference)
+        parameter = jnp.array(parameter)
         # Warm start 
         self.X0 = self.X0.at[:,:13+self.config.n_joints].set(reference[:,:13+self.config.n_joints])
 
         _cost = partial(self.cost,self.config.W,reference)
         _dynamics = partial(self.dynamics,parameter=parameter)
         model_evaluator = partial(optimizers.model_evaluator_helper, _cost, _dynamics,x0)
+        jitted_model_evaluator = jax.jit(model_evaluator)
 
         _exit = False
         max_iter = 100
@@ -421,9 +425,11 @@ class MPCControllerWrapper:
             self.U0 = U
             self.V0 = V
 
-            g, c = model_evaluator(X,U)
+            
 
-            stop = timer()
+            g, c = jitted_model_evaluator(X,U)
+
+            stop = timer()            
 
             l2_cost = np.sum(g*g)
             
