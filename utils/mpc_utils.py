@@ -43,7 +43,6 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0
     dp = x[7+n_joints:10+n_joints]
     # omega = x[10+n_joints:13+n_joints]
     # dq = x[13+n_joints:13+2*n_joints]
-    # proprio_height = input[6] + jnp.sum(contact*foot[2::3])/jnp.sum(contact)
     yaw = jnp.arctan2(2*(quat[0]*quat[3] + quat[1]*quat[2]), 1 - 2*(quat[2]*quat[2] + quat[3]*quat[3]))
     Ryaw = jnp.array([[jnp.cos(yaw), -jnp.sin(yaw), 0],[jnp.sin(yaw), jnp.cos(yaw), 0],[0, 0, 1]])
     proprio_height = input[6] + jnp.sum(liftoff[2::3])/n_contact
@@ -92,7 +91,7 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0
 
         def calc_foothold(direction):
             f1 = 0.5*ref_lin_vel[direction]*duty_factor/step_freq
-            f2 = jnp.sqrt(proprio_height/9.81)*(dp[direction]-ref_lin_vel[direction])
+            f2 = jnp.sqrt(input[6]/9.81)*(dp[direction]-ref_lin_vel[direction])
             f = f1 + f2 + hip[direction::3]
             return f
 
@@ -108,7 +107,7 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0
 
         def cubic_splineZ(current_foot, foothold, step_height,val):
             
-            initial_speed = 0.2
+            initial_speed = 0.7
 
             a = 16*step_height - 8*foothold - 8*current_foot - 2*initial_speed
             b = 5*initial_speed + 14*foothold + 18*current_foot - 32*step_height
