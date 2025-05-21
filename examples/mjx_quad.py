@@ -34,7 +34,7 @@ robot_leg_joints = dict(FR=['FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint', ]
                         FL=['FL_hip_joint', 'FL_thigh_joint', 'FL_calf_joint', ],
                         RR=['RR_hip_joint', 'RR_thigh_joint', 'RR_calf_joint', ],
                         RL=['RL_hip_joint', 'RL_thigh_joint', 'RL_calf_joint'])
-mpc_frequency = 50.0
+mpc_frequency = config.mpc_frequency
 state_observables_names = tuple(QuadrupedEnv.ALL_OBS)  # return all available state observables
  
 # Initialize simulation environment
@@ -63,7 +63,7 @@ counter = 0
 # Main simulation loop
 tau = jnp.zeros(config.n_joints)
 tau_old = jnp.zeros(config.n_joints)
-delay = int(0.015*sim_frequency)
+delay = int(0.007*sim_frequency)
 print('Delay: ',delay)
 q = config.q0.copy()
 dq = jnp.zeros(config.n_joints)
@@ -95,7 +95,7 @@ while env.viewer.is_running():
                 qvel = env.mjData.qvel.copy()
                 # tau_fb = K@(x-np.concatenate([qpos,qvel]))
 
-                tau_fb = 10*(q-qpos[7:7+config.n_joints]) -3*(qvel[6:6+config.n_joints])
+                tau_fb = 10*(q-qpos[7:7+config.n_joints]) -2*(qvel[6:6+config.n_joints])
                 state, reward, is_terminated, is_truncated, info = env.step(action=tau + tau_fb)
                 counter += 1
         start = timer()
@@ -105,7 +105,7 @@ while env.viewer.is_running():
 
         stop = timer()
 
-    tau_fb = 10*(q-qpos[7:7+config.n_joints])-3*(qvel[6:6+config.n_joints])
+    tau_fb = 10*(q-qpos[7:7+config.n_joints])-2*(qvel[6:6+config.n_joints])
     state, reward, is_terminated, is_truncated, info = env.step(action= tau + tau_fb)
     counter += 1
     env.render()

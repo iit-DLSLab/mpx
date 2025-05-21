@@ -18,10 +18,10 @@ N = 25         # Number of stages
 mpc_frequency = 50  # Frequency of MPC updates in Hz
 
 # Timer values (make sure the values match your intended configuration)
-timer_t = jnp.array([0.5, 0.0, 0.0, 0.5])  # Timer values for each leg
-duty_factor = 0.65  # Duty factor for the gait
-step_freq = 1.35   # Step frequency in Hz
-step_height = 0.12 # Step height in meters
+timer_t =  jnp.array([0.5, 0.0, 0.0, 0.5])  # Timer values for each leg galop jnp.array([0.25, 0.5, 0.75, 0.0]) crawl jnp.array([0.25, 0.75, 0.0, 0.5])
+duty_factor = 0.65 #0.65  # Duty factor for the gait
+step_freq = 1.35 #1.4   # Step frequency in Hz
+step_height = 0.14 # Step height in meters
 initial_height = 0.1  # Initial height of the robot's base in meters
 #aliengo
 robot_height = 0.36  # Height of the robot's base in meters
@@ -65,12 +65,12 @@ u_ref = jnp.zeros(m)  # Reference controls (concatenated torques)
 # Cost matrices (diagonal matrices created using jnp.diag)
 Qp    = jnp.diag(jnp.array([0, 0, 1e4]))  # Cost matrix for position
 Qrot  = jnp.diag(jnp.array([1000, 1000, 0]))  # Cost matrix for rotation
-Qq    = jnp.diag(jnp.ones(n_joints)) * 1e-2  # Cost matrix for joint angles
+Qq    = jnp.diag(jnp.ones(n_joints)) * 1e-1 # Cost matrix for joint angles
 Qdp   = jnp.diag(jnp.array([1, 1, 1])) * 5e3  # Cost matrix for position derivatives
 Qomega= jnp.diag(jnp.array([1, 1, 1])) * 1e2  # Cost matrix for angular velocity
-Qdq   = jnp.diag(jnp.ones(n_joints)) * 1e-2  # Cost matrix for joint angle derivatives
+Qdq   = jnp.diag(jnp.ones(n_joints)) * 1e-1  # Cost matrix for joint angle derivatives
 Qtau  = jnp.diag(jnp.ones(n_joints)) * 1e-1  # Cost matrix for torques
-Q_grf = jnp.diag(jnp.ones(3*n_contact)) * 1e-3  # Cost matrix for ground reaction forces
+Q_grf = jnp.diag(jnp.ones(3*n_contact)) * 1e-2  # Cost matrix for ground reaction forces
 
 # For the leg contact cost, repeat the unit cost for each contact point.
 Qleg = jnp.diag(jnp.tile(jnp.array([1e4,1e4,1e5]),n_contact))
@@ -78,7 +78,7 @@ Qleg = jnp.diag(jnp.tile(jnp.array([1e4,1e4,1e5]),n_contact))
 # Combine all cost matrices into a block diagonal matrix
 W = jax.scipy.linalg.block_diag(Qp, Qrot, Qq, Qdp, Qomega, Qdq, Qleg, Qtau,Q_grf)
 
-use_terrain_estimation = True  # Flag to use terrain estimation
+use_terrain_estimation = False  # Flag to use terrain estimation
 
 cost = partial(mpc_objectives.quadruped_wb_obj,True)
 hessian_approx = partial(mpc_objectives.quadruped_wb_hessian_gn,True)
