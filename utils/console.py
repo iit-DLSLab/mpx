@@ -89,7 +89,7 @@ class Console():
                 elif(input_string == "setStepHeight"):
                     temp = input("Step Height: >>> ")
                     if(temp != ""):
-                        temp = max(0.02, min(float(temp), 0.2))
+                        temp = max(0.02, min(float(temp), 0.5))
                         self.controller_node.mpc.step_height = temp
                         
                 elif(input_string == "setGaitTimer"):

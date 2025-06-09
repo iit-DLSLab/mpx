@@ -40,10 +40,10 @@ q0_init = jnp.array([-0.2, 0.8, -1.8, -0.2, 0.8, -1.8, -0.2, 0.8, -1.8, -0.2, 0.
 
 #alingo
 p_legs0 = jnp.array([
-    0.27092872, 0.174, .0,  # Initial position of the front left leg
-    0.27092872, -0.174, .0, # Initial position of the front right leg
-   -0.20887128, 0.174, .0,  # Initial position of the rear left leg
-   -0.20887128, -0.174  , .0   # Initial position of the rear right leg
+    0.27092872, 0.193   , .0,  # Initial position of the front left leg
+    0.27092872, -0.193, .0, # Initial position of the front right leg
+   -0.20887128, 0.193, .0,  # Initial position of the rear left leg
+   -0.20887128, -0.193  , .0   # Initial position of the rear right leg
 ])
 #go2
 # p_legs0 = jnp.array([
@@ -78,7 +78,7 @@ Qleg = jnp.diag(jnp.tile(jnp.array([1e4,1e4,1e5]),n_contact))
 # Combine all cost matrices into a block diagonal matrix
 W = jax.scipy.linalg.block_diag(Qp, Qrot, Qq, Qdp, Qomega, Qdq, Qleg, Qtau,Q_grf)
 
-use_terrain_estimation = False  # Flag to use terrain estimation
+use_terrain_estimation = True  # Flag to use terrain estimation
 
 cost = partial(mpc_objectives.quadruped_wb_obj,True)
 hessian_approx = partial(mpc_objectives.quadruped_wb_hessian_gn,True)

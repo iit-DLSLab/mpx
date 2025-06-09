@@ -73,7 +73,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                     mujoco.mj_step(model, data)
                     counter += 1
             start = timer()
-            ref_base_lin_vel = jnp.array([0.4,0,0])
+            ref_base_lin_vel = jnp.array([0.3,0,0])
             ref_base_ang_vel = jnp.array([0,0,0.0])
             
             # x0 = jnp.concatenate([qpos, qvel,jnp.zeros(3*config.n_contact)])

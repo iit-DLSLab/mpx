@@ -18,7 +18,7 @@ import primal_dual_ilqr.primal_dual_ilqr.optimizers as optimizers
 from functools import partial
 from gym_quadruped.quadruped_env import QuadrupedEnv
 import copy
-from gym_quadruped.utils.mujoco.visual import render_sphere, render_vector
+from gym_quadruped.utils.mujoco.visual import render_sphere, render_vector,render_ghost_robot 
  
 import utils.mpc_wrapper as mpc_wrapper
 import config.config_barrel_roll as config
@@ -52,18 +52,18 @@ env = QuadrupedEnv(robot=robot_name,
                    state_obs_names=state_observables_names,  # Desired quantities in the 'state'
                    )
 obs = env.reset(random=False)
-n_env = 2
 # Define the MPC wrapper
 mpc = mpc_wrapper.MPCControllerWrapper(config)
 env.mjData.qpos = jnp.concatenate([config.p0, config.quat0,config.q0])
 env.render()
 ids = []
-for i in range(config.N*12):
+for i in range(4):
      ids.append(render_vector(env.viewer,
               np.zeros(3),
               np.zeros(3),
               0.1,
               np.array([1, 0, 0, 1])))
+     
 counter = 0
 # Main simulation loop
 q = config.q0.copy()
@@ -72,27 +72,40 @@ mpc_time = 0
 mpc.robot_height = config.robot_height
 mpc.reset(env.mjData.qpos.copy(),env.mjData.qvel.copy())
 
-X,U,reference = mpc.runOffline(jnp.concatenate([config.p0, config.quat0,config.q0]),jnp.zeros(6+config.n_joints))
+X,U,reference,output  = mpc.runOffline(jnp.concatenate([config.p0, config.quat0,config.q0]),jnp.zeros(6+config.n_joints))
 
 import matplotlib.pyplot as plt
-iteration = 0
-
+iteration = 99
 while env.viewer.is_running():
-    
     env.mjData.qpos = X[counter,:7+config.n_joints]
     env.mjData.qvel = X[counter,7+config.n_joints:13+2*config.n_joints]
+    if iteration < len(output):
+        data = output[iteration][::10,:7+config.n_joints]
+        env._render_ghost_robots(data,np.arange(data.shape[0])/data.shape[0]*0.5)
+    else:
+         data = output[-1][::10,:7+config.n_joints]
+         env._render_ghost_robots(data,np.arange(data.shape[0])*0)
+    iteration += 1
+
     grf = X[counter,13+2*config.n_joints + 3*config.n_contact:13+2*config.n_joints+6*config.n_contact]
     foot_op_vec = X[counter,13+2*config.n_joints:13+2*config.n_joints+3*config.n_contact]
     for c in range(config.n_contact):
+            if grf[3*c +2]*0.5 < np.sqrt(grf[3*c]**2 + grf[3*c +1]**2):
+                color = np.array([1, 0, 0, 1])
+            else:
+                color = np.array([0, 1, 0, 1])
             render_vector(env.viewer,
                   grf[3*c:3*(c+1)],
                   foot_op_vec[3*c:3*(c+1)],
                   np.linalg.norm(grf[3*c:3*(c+1)])/220,
-                  np.array([1, 0, 0, 1]),
+                  color,
                   ids[c])
     mujoco.mj_step(env.mjModel, env.mjData)
-    counter += 1
-    time.sleep(1/mpc_frequency)
-    if counter > config.N:
-        counter = 0
+    # sleep(0.1)
+    # counter += 1
+    if iteration < len(output):
+        time.sleep(config.dt)
+    else:
+         counter += 1
+         time.sleep(5*config.dt)
     env.render()

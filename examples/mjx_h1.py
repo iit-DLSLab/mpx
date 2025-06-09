@@ -35,7 +35,7 @@ import numpy as np
 import utils.mpc_wrapper as mpc_wrapper
 import config.config_h1 as config
 
-model = mujoco.MjModel.from_xml_path(dir_path + '../data/unitree_h1/mjx_scene_h1_walk.xml')
+model = mujoco.MjModel.from_xml_path(dir_path + '/../data/unitree_h1/mjx_scene_h1_walk.xml')
 data = mujoco.MjData(model)
 mpc_frequency = 50.0
 sim_frequency = 500.0
@@ -79,7 +79,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                     counter += 1
             start = timer()
             ref_base_lin_vel = jnp.array([0.3,0,0])
-            ref_base_ang_vel = jnp.array([0,0,0.2])
+            ref_base_ang_vel = jnp.array([0,0,0.0])
             
 
             input = np.array([ref_base_lin_vel[0],ref_base_lin_vel[1],ref_base_lin_vel[2],

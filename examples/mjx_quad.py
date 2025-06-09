@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 dir_path = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.abspath(os.path.join(dir_path, '..')))
 import jax.numpy as jnp
@@ -28,7 +29,7 @@ from timeit import default_timer as timer
  
 # Define robot and scene parameters
 robot_name = "aliengo"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
-scene_name = "flat"
+scene_name = "random_boxes"
 robot_feet_geom_names = dict(FR='FR',FL='FL', RR='RR' , RL='RL')
 robot_leg_joints = dict(FR=['FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint', ],
                         FL=['FL_hip_joint', 'FL_thigh_joint', 'FL_calf_joint', ],
@@ -53,18 +54,19 @@ mpc = mpc_wrapper.MPCControllerWrapper(config)
 env.mjData.qpos = jnp.concatenate([config.p0, config.quat0,config.q0])
 env.render()
 ids = []
-for i in range(config.N*12):
-     ids.append(render_vector(env.viewer,
-              np.zeros(3),
-              np.zeros(3),
-              0.1,
-              np.array([1, 0, 0, 1])))
+# for i in range(8):
+#      ids.append(render_vector(env.viewer,
+#               np.zeros(3),
+#               np.zeros(3),
+#               0.1,
+#               np.array([1, 0, 0, 1])))
 counter = 0
 # Main simulation loop
 tau = jnp.zeros(config.n_joints)
 tau_old = jnp.zeros(config.n_joints)
 delay = int(0.007*sim_frequency)
 print('Delay: ',delay)
+
 q = config.q0.copy()
 dq = jnp.zeros(config.n_joints)
 mpc_time = 0
@@ -104,8 +106,16 @@ while env.viewer.is_running():
         print("Time taken for MPC: ", stop-start)   
 
         stop = timer()
+        # for i in range(4):
+        #     render_sphere(env.viewer,
+        #                   collision_point[3*i:3*i+3],
+        #                   0.2,
+        #                   np.array([1, 0, 0, 0.5]),
+        #                   ids[i])
 
     tau_fb = 10*(q-qpos[7:7+config.n_joints])-2*(qvel[6:6+config.n_joints])
     state, reward, is_terminated, is_truncated, info = env.step(action= tau + tau_fb)
+
+    # time.sleep(0.1)
     counter += 1
     env.render()

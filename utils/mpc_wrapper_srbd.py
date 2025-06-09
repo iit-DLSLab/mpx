@@ -71,32 +71,30 @@ class BatchedMPCControllerWrapper:
         dynamics = partial(mpc_dyn_model.quadruped_srbd_dynamics,
                                 config.mass, config.inertia, jnp.linalg.inv(config.inertia), config.dt)
 
-        work = partial(optimizers.mpc, cost, dynamics, None, False)
+        work = partial(optimizers.mpc, cost, dynamics, hessian_approx, False)
         
         reference_generator = partial(mpc_utils.reference_generator_srbd,
-            config.N, config.dt, config.n_contact ,duty_factor = config.duty_factor,  step_freq= config.step_freq ,step_height=config.step_height,foot0 = config.p_legs0)
+            config.use_terrain_estimator ,config.N, config.dt, config.n_contact , mass = config.mass, clearence_speed = config.clearence_speed, duty_factor = config.duty_factor,  step_freq= config.step_freq ,step_height=config.step_height,foot0 = config.p_legs0)
         
         whole_body_control = partial(mpc_utils.whole_body_interface, model, mjx_model, contact_id, body_id,config.whole_body_frequency,config.Kp,config.Kd)
 
         timer_t = partial(mpc_utils.timer_run, duty_factor=config.duty_factor, step_freq=config.step_freq)
 
-        self._solve = jax.vmap(work)
-        self._ref_gen = jax.vmap(reference_generator)
-        self._timer_run = jax.vmap(mpc_utils.timer_run, in_axes=(None,None,0, None))
-        self._whole_body_interface = jax.vmap(whole_body_control)
+        self._solve = jax.jit(jax.vmap(work))
+        self._ref_gen = jax.jit(jax.vmap(reference_generator))
+        self._timer_run = jax.jit(jax.vmap(mpc_utils.timer_run, in_axes=(None,None,0, None)))
+        self._whole_body_interface = jax.jit(jax.vmap(whole_body_control))
 
         self.contact_time = jnp.tile(config.timer_t, (n_env, 1))
         self.liftoff = jnp.zeros((n_env, 3*config.n_contact))
 
         self.foot_ref = jnp.zeros((n_env, 3*config.n_contact))
         self.foot_ref_dot = jnp.zeros((n_env, 3*config.n_contact))
-        self.foot_ref_ddot = jnp.zeros((n_env, 3*config.n_contact))
-
-        self.J_old = jnp.zeros((n_env, 18,3*config.n_contact))
 
         self.grf = jnp.zeros((n_env, 3*config.n_contact))
         
-    def run(self, x0, input, foot_op):
+        
+    def run(self, x0, input, foot_op,contact):
         """
         Runs one MPC update using the current state, input, and foot positions.
         
@@ -115,21 +113,21 @@ class BatchedMPCControllerWrapper:
        
         # Generate reference trajectory and additional MPC parameters.
         
-        reference, parameter, self.liftoff, foot_ref_dot,foot_ref_ddot = self._ref_gen(
+        reference, parameter, self.liftoff, foot_ref_dot = self._ref_gen(
             t_timer = self.contact_time.copy(),
             x = x0,
             foot = foot_op,
             input = input,
-            liftoff = self.liftoff,
+            contact = contact,
+            liftoff = self.liftoff
         )
         
         self.foot_ref = parameter[:,0,4:]
         self.foot_ref_dot = foot_ref_dot[:,0,:]
-        self.foot_ref_ddot = foot_ref_ddot[:,0,:]
         
         # Execute the MPC optimization (work function).
        
-        X, U, V, _ = self._solve(
+        X, U, V = self._solve(
             reference,
             parameter,
             jnp.tile(self.config.W, (self.n_env, 1, 1)),
@@ -159,7 +157,7 @@ class BatchedMPCControllerWrapper:
         return 0
     
     def whole_body_run(self,qpos,qvel):
-        return self._whole_body_interface(qpos,qvel,self.grf,self.foot_ref,self.foot_ref_dot,self.foot_ref_ddot,self.J_old,self.contact)
+        return self._whole_body_interface(qpos,qvel,self.grf,self.foot_ref,self.foot_ref_dot,self.contact)
     
     def torch_whole_body_run(self,qpos,qvel):
         qpos = jax_dlpack.from_dlpack(qpos)

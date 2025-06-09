@@ -4,13 +4,13 @@ from mujoco import mjx
 from mujoco.mjx._src import math
 from functools import partial
 
-def penaly(constraint,alpha = 0.1,sigma = 5):
+def penalty(constraint,alpha = 0.1,sigma = 5):
         def safe_log(x):
             x = jnp.clip(x,1e-10,1e6)
             return jnp.log(x)
         quadratic_barrier = alpha/2*(jnp.square((constraint-2*sigma)/sigma)-jnp.ones_like(constraint))
         log_barrier = -alpha*safe_log(constraint)
-        return jnp.clip(jnp.where(constraint>sigma,log_barrier,quadratic_barrier-alpha*jnp.log(sigma)),0,1e8)
+        return jnp.clip(jnp.where(constraint>sigma,log_barrier,quadratic_barrier+log_barrier),0,1e8)
 
 def quadruped_srbd_obj(n_contact,N,W,reference,x, u, t):
 
@@ -27,7 +27,7 @@ def quadruped_srbd_obj(n_contact,N,W,reference,x, u, t):
 
     mu = 0.7
     friction_cone = mu*grf[2::3] - jnp.sqrt(jnp.square(grf[1::3]) + jnp.square(grf[::3]) + jnp.ones(n_contact)*1e-2)
-    friction_cone = jnp.clip(penaly(friction_cone),1e-6,1e6)
+    friction_cone = jnp.clip(penalty(friction_cone),1e-6,1e6)
     stage_cost = (p - p_ref).T @ W[:3,:3] @ (p - p_ref) + math.quat_sub(quat,quat_ref).T@W[3:6,3:6]@math.quat_sub(quat,quat_ref) +\
                  (dp - dp_ref).T @ W[6:9,6:9] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9:12,9:12] @ (omega - omega_ref) +\
                  grf.T@W[12:12+3*n_contact,12:12+3*n_contact]@grf + jnp.sum(friction_cone)
@@ -68,9 +68,9 @@ def quadruped_srbd_hessian_gn(n_contact,W,reference,x, u, t):
     J_x = jax.jacobian(residual,0)
     J_u = jax.jacobian(residual,1)
     contact = reference[t,13 : 13+n_contact]
-    hessian_penaly = jax.grad(jax.grad(penaly))
+    hessian_penalty = jax.grad(jax.grad(penalty))
     J_friction_cone = jax.jacobian(friction_constraint)
-    H_penalty = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(friction_constraint(u)),1e-6, 1e6)*contact)
+    H_penalty = jnp.diag(jnp.clip(jax.vmap(hessian_penalty)(friction_constraint(u)),1e-6, 1e6)*contact)
     H_constraint = J_friction_cone(u).T@H_penalty@J_friction_cone(u)
     return J_x(x,u).T@W@J_x(x,u), J_u(x,u).T@W@J_u(x,u) + H_constraint, J_x(x,u).T@W@J_u(x,u)
 
@@ -94,10 +94,9 @@ def quadruped_wb_obj(swing_tracking,n_joints,n_contact,N,W,reference,x, u, t):
     p_leg_ref = reference[t,13+n_joints:13+n_joints+3*n_contact]
     contact = reference[t,13+n_joints+3*n_contact:13+n_joints+4*n_contact]
     grf_ref = reference[t,13+n_joints+4*n_contact:13+n_joints+7*n_contact]
-    stand_up_flag = reference[t,-1]
-    mu = 0.7
+    mu = 0.5
     friction_cone = mu*grf[2::3] - jnp.sqrt(jnp.square(grf[1::3]) + jnp.square(grf[::3]) + jnp.ones(n_contact)*1e-2)
-    friction_cone = penaly(friction_cone)
+    friction_cone = penalty(friction_cone)
     torque_limits = jnp.array([
         44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44,
         44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44 ])
@@ -105,7 +104,7 @@ def quadruped_wb_obj(swing_tracking,n_joints,n_contact,N,W,reference,x, u, t):
     # min_force = grf[2::3] - jnp.ones(n_contact)*10
     torque_limits = jnp.kron(jnp.eye(n_joints),(jnp.array([-1,1]))).T@tau+torque_limits + jnp.ones_like(torque_limits)*1e-2
 
-    joint_speed_limits = jnp.ones(2*n_joints)*15
+    joint_speed_limits = jnp.ones(2*n_joints)*10
     joint_speed_limits = jnp.kron(jnp.eye(n_joints),(jnp.array([-1,1]))).T@dq + joint_speed_limits + jnp.ones_like(joint_speed_limits)*1e-2
 
     if swing_tracking:
@@ -118,7 +117,7 @@ def quadruped_wb_obj(swing_tracking,n_joints,n_contact,N,W,reference,x, u, t):
                  (contact_map*(p_leg - p_leg_ref)).T @W[12+2*n_joints:12+2*n_joints+3*n_contact,12+2*n_joints:12+2*n_joints+3*n_contact]@ (contact_map*(p_leg - p_leg_ref))+ \
                  tau.T @ W[12+2*n_joints+3*n_contact:12+3*n_joints+3*n_contact,12+2*n_joints+3*n_contact:12+3*n_joints+3*n_contact] @ tau +\
                  (grf-grf_ref).T @ W[12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact,12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact] @ (grf-grf_ref) +\
-                 jnp.sum(penaly(torque_limits,1,1)) + jnp.sum(friction_cone*contact) + jnp.sum(penaly(joint_speed_limits,1,1))
+                 jnp.sum(penalty(torque_limits,1,1)) + jnp.sum(friction_cone*contact) + jnp.sum(penalty(joint_speed_limits,1,1))
     term_cost = (p - p_ref).T @ W[:3,:3] @ (p - p_ref) + math.quat_sub(quat,quat_ref).T@W[3:6,3:6]@math.quat_sub(quat,quat_ref) + (q - q_ref).T @ W[6:6+n_joints,6:6+n_joints] @ (q - q_ref) +\
                  (dp - dp_ref).T @ W[6+n_joints:9+n_joints,6+n_joints:9+n_joints] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9+n_joints:12+n_joints,9+n_joints:12+n_joints] @ (omega - omega_ref) + dq.T @ W[12+n_joints:12+2*n_joints,12+n_joints:12+2*n_joints] @ dq
 
@@ -164,7 +163,7 @@ def quadruped_wb_hessian_gn(swing_tracking,n_joints,n_contact,W,reference,x, u, 
         return jnp.concatenate([p_res,quat_res,q_res,dp_res,omega_res,dq_res,p_leg_res,tau_res,grf_res])
     def friction_constraint(x):
         grf = x[13+2*n_joints+3*n_contact:]
-        mu = 0.7
+        mu = 0.5
         friction_cone = mu*grf[2::3] - jnp.sqrt(jnp.square(grf[1::3]) + jnp.square(grf[::3]) + jnp.ones(n_contact)*1e-1)
         return friction_cone
     def torque_constraint(u):
@@ -175,7 +174,7 @@ def quadruped_wb_hessian_gn(swing_tracking,n_joints,n_contact,W,reference,x, u, 
         return jnp.kron(jnp.eye(n_joints),(jnp.array([-1,1]))).T@tau+torque_limits + jnp.ones_like(torque_limits)*1e-2
     def speed_constarint(x):
         dq = x[13+n_joints:13+2*n_joints]
-        joint_speed_limits = jnp.ones(2*n_joints)*15
+        joint_speed_limits = jnp.ones(2*n_joints)*10
         joint_speed_limits = jnp.kron(jnp.eye(n_joints),(jnp.array([-1,1]))).T@dq + joint_speed_limits + jnp.ones_like(joint_speed_limits)*1e-2
         return joint_speed_limits
     def min_force_constraint(x):
@@ -184,17 +183,18 @@ def quadruped_wb_hessian_gn(swing_tracking,n_joints,n_contact,W,reference,x, u, 
         return min_force
     J_x = jax.jacobian(residual,0)
     J_u = jax.jacobian(residual,1)
-    hessian_penaly = jax.grad(jax.grad(penaly))
+    hessian_penalty = jax.grad(jax.grad(penalty))
     J_friction_cone = jax.jacobian(friction_constraint)
     J_torque = jax.jacobian(torque_constraint)
     J_speed = jax.jacobian(speed_constarint)
     # J_min_force = jax.jacobian(min_force_constraint)
-    hessian_penaly_torque = partial(hessian_penaly,alpha = 1,sigma = 1)
+    hessian_penalty_torque = partial(hessian_penalty,alpha = 1,sigma = 1)
+    hessian_penalty_collision = partial(hessian_penalty,alpha = 10,sigma = 0.01)
     # W = W.at[12+2*n_joints + 6:12+2*n_joints+3*n_contact,12+2*n_joints + 6:12+2*n_joints+3*n_contact].set(W[12+2*n_joints + 6:12+2*n_joints+3*n_contact,12+2*n_joints + 6:12+2*n_joints+3*n_contact]*stand_up_flag)
-    H_penalty = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(friction_constraint(x)), -1e6, 1e6)*contact)
-    H_penalty_torque = jnp.diag(jnp.clip(jax.vmap(hessian_penaly_torque)(torque_constraint(u)), -1e6, 1e6))
-    H_penalty_speed = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(speed_constarint(x)), -1e6, 1e6))
-    # H_penalty_min_force = jnp.diag(jnp.clip(jax.vmap(hessian_penaly_torque)(min_force_constraint(x)), -1e6, 1e6)*contact)
+    H_penalty = jnp.diag(jnp.clip(jax.vmap(hessian_penalty)(friction_constraint(x)), -1e6, 1e6)*contact)
+    H_penalty_torque = jnp.diag(jnp.clip(jax.vmap(hessian_penalty_torque)(torque_constraint(u)), -1e6, 1e6))
+    H_penalty_speed = jnp.diag(jnp.clip(jax.vmap(hessian_penalty)(speed_constarint(x)), -1e6, 1e6))
+    # H_penalty_min_force = jnp.diag(jnp.clip(jax.vmap(hessian_penalty_torque)(min_force_constraint(x)), -1e6, 1e6)*contact)
     H_constraint = J_friction_cone(x).T@H_penalty@J_friction_cone(x)
     H_constraint_u = J_torque(u).T@H_penalty_torque@J_torque(u)
     H_constraint += J_speed(x).T@H_penalty_speed@J_speed(x)
@@ -243,7 +243,7 @@ def h1_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
                  (dp - dp_ref).T @ W[6+n_joints:9+n_joints,6+n_joints:9+n_joints] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9+n_joints:12+n_joints,9+n_joints:12+n_joints] @ (omega - omega_ref) + dq.T @ W[12+n_joints:12+2*n_joints,12+n_joints:12+2*n_joints] @ dq +\
                  (p_leg - p_leg_ref).T @W[12+2*n_joints:12+2*n_joints+3*n_contact,12+2*n_joints:12+2*n_joints+3*n_contact]@ (p_leg - p_leg_ref) + \
                  tau.T @ W[12+2*n_joints+3*n_contact:12+3*n_joints+3*n_contact,12+2*n_joints+3*n_contact:12+3*n_joints+3*n_contact] @ tau +\
-                + (grf - grf_ref).T@W[12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact,12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact]@(grf - grf_ref)#+ jnp.sum(penaly(joints_limits)) + jnp.sum(penaly(torque_limits))
+                + (grf - grf_ref).T@W[12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact,12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact]@(grf - grf_ref)#+ jnp.sum(penalty(joints_limits)) + jnp.sum(penalty(torque_limits))
     term_cost = (p - p_ref).T @ W[:3,:3] @ (p - p_ref) + math.quat_sub(quat,quat_ref).T@W[3:6,3:6]@math.quat_sub(quat,quat_ref) + (q - q_ref).T @ W[6:6+n_joints,6:6+n_joints] @ (q - q_ref) +\
                  (dp - dp_ref).T @ W[6+n_joints:9+n_joints,6+n_joints:9+n_joints] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9+n_joints:12+n_joints,9+n_joints:12+n_joints] @ (omega - omega_ref) + dq.T @ W[12+n_joints:12+2*n_joints,12+n_joints:12+2*n_joints] @ dq
 
@@ -308,14 +308,14 @@ def h1_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
         
     J_x = jax.jacobian(residual,0)
     J_u = jax.jacobian(residual,1)
-    hessian_penaly = jax.grad(jax.grad(penaly))
+    hessian_penalty = jax.grad(jax.grad(penalty))
     J_friction_cone = jax.jacobian(friction_constraint)
     # J_joint = jax.jacobian(joint_constraint)
     # J_torque = jax.jacobian(torque_constraint)
     contact = reference[t,13+n_joints+3*n_contact:13+n_joints+4*n_contact]
-    H_penalty_friction = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(friction_constraint(x)), -1e6, 1e6)*contact)
-    # H_penalty_joint = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(joint_constraint(x)), -1e6, 1e6))
-    # H_penalty_torque = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(torque_constraint(u)), -1e6, 1e6))
+    H_penalty_friction = jnp.diag(jnp.clip(jax.vmap(hessian_penalty)(friction_constraint(x)), -1e6, 1e6)*contact)
+    # H_penalty_joint = jnp.diag(jnp.clip(jax.vmap(hessian_penalty)(joint_constraint(x)), -1e6, 1e6))
+    # H_penalty_torque = jnp.diag(jnp.clip(jax.vmap(hessian_penalty)(torque_constraint(u)), -1e6, 1e6))
     H_constraint = J_friction_cone(x).T@H_penalty_friction@J_friction_cone(x)
     # H_constraint += J_joint(x).T@H_penalty_joint@J_joint(x)
     # H_constraint_u = J_torque(u).T@H_penalty_torque@J_torque(u)
@@ -369,7 +369,7 @@ def talos_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
                  (dp - dp_ref).T @ W[6+n_joints:9+n_joints,6+n_joints:9+n_joints] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9+n_joints:12+n_joints,9+n_joints:12+n_joints] @ (omega - omega_ref) + dq.T @ W[12+n_joints:12+2*n_joints,12+n_joints:12+2*n_joints] @ dq +\
                  (p_leg - p_leg_ref).T @W[12+2*n_joints:12+2*n_joints+3*n_contact,12+2*n_joints:12+2*n_joints+3*n_contact]@ (p_leg - p_leg_ref) + \
                  tau.T @ W[12+2*n_joints+3*n_contact:12+3*n_joints+3*n_contact,12+2*n_joints+3*n_contact:12+3*n_joints+3*n_contact] @ tau +\
-                + (grf - grf_ref).T@W[12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact,12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact]@(grf - grf_ref) #+ foot_speed.T@W[12+3*n_joints+6*n_contact:12+3*n_joints+9*n_contact,12+3*n_joints+6*n_contact:12+3*n_joints+9*n_contact]@foot_speed#+ jnp.sum(penaly(joints_limits)) + jnp.sum(penaly(torque_limits))
+                + (grf - grf_ref).T@W[12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact,12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact]@(grf - grf_ref) #+ foot_speed.T@W[12+3*n_joints+6*n_contact:12+3*n_joints+9*n_contact,12+3*n_joints+6*n_contact:12+3*n_joints+9*n_contact]@foot_speed#+ jnp.sum(penalty(joints_limits)) + jnp.sum(penalty(torque_limits))
     term_cost = (p - p_ref).T @ W[:3,:3] @ (p - p_ref) + math.quat_sub(quat,quat_ref).T@W[3:6,3:6]@math.quat_sub(quat,quat_ref) + (q - q_ref).T @ W[6:6+n_joints,6:6+n_joints] @ (q - q_ref) +\
                  (dp - dp_ref).T @ W[6+n_joints:9+n_joints,6+n_joints:9+n_joints] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9+n_joints:12+n_joints,9+n_joints:12+n_joints] @ (omega - omega_ref) + dq.T @ W[12+n_joints:12+2*n_joints,12+n_joints:12+2*n_joints] @ dq
 
@@ -435,14 +435,14 @@ def talos_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
         
     J_x = jax.jacobian(residual,0)
     J_u = jax.jacobian(residual,1)
-    hessian_penaly = jax.grad(jax.grad(penaly))
+    hessian_penalty = jax.grad(jax.grad(penalty))
     J_friction_cone = jax.jacobian(friction_constraint)
     # J_joint = jax.jacobian(joint_constraint)
     # J_torque = jax.jacobian(torque_constraint)
     contact = reference[t,13+n_joints+3*n_contact:13+n_joints+4*n_contact]
-    H_penalty_friction = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(friction_constraint(u)), -1e6, 1e6)*contact)
-    # H_penalty_joint = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(joint_constraint(x)), -1e6, 1e6))
-    # H_penalty_torque = jnp.diag(jnp.clip(jax.vmap(hessian_penaly)(torque_constraint(u)), -1e6, 1e6))
+    H_penalty_friction = jnp.diag(jnp.clip(jax.vmap(hessian_penalty)(friction_constraint(u)), -1e6, 1e6)*contact)
+    # H_penalty_joint = jnp.diag(jnp.clip(jax.vmap(hessian_penalty)(joint_constraint(x)), -1e6, 1e6))
+    # H_penalty_torque = jnp.diag(jnp.clip(jax.vmap(hessian_penalty)(torque_constraint(u)), -1e6, 1e6))
     H_constraint = J_friction_cone(u).T@H_penalty_friction@J_friction_cone(u)
     # H_constraint += J_joint(x).T@H_penalty_joint@J_joint(x)
     # H_constraint_u = J_torque(u).T@H_penalty_torque@J_torque(u)
