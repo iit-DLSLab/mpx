@@ -81,7 +81,7 @@ class BatchedMPCControllerWrapper:
         work = partial(optimizers.mpc, cost, self.dynamics, hessian_approx, False)
 
         reference_generator = partial(mpc_utils.reference_generator,
-            config.use_terrain_estimation ,config.N, config.dt, config.n_joints, config.n_contact, robot_mass, foot0 = config.p_legs0, q0 = config.q0)
+            config.use_terrain_estimation ,config.N, config.dt, config.n_joints, config.n_contact, robot_mass, foot0 = config.p_legs0, q0 = config.q0,clearence_speed = 0.2)
 
         timer_t = partial(mpc_utils.timer_run, duty_factor=config.duty_factor, step_freq=config.step_freq)
 
@@ -113,6 +113,8 @@ class BatchedMPCControllerWrapper:
         # Update the timer state for the gait reference.
         _ , self.contact_time = self._timer_run(self.duty_factor,self.step_freq,self.contact_time,1/self.mpc_frequency)
 
+        contact = jnp.zeros((self.n_env, self.config.n_contact))
+
         # Generate reference trajectory and additional MPC parameters.
         reference, parameter, self.liftoff = self._ref_gen(
             duty_factor = self.duty_factor,
@@ -123,6 +125,7 @@ class BatchedMPCControllerWrapper:
             foot = foot_op,
             input = input,
             liftoff = self.liftoff,
+            contact = contact,
         )
 
         # Execute the MPC optimization (work function).

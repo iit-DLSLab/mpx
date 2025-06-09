@@ -4,7 +4,7 @@ import time
 import numpy as np
 
 # Config imports
-import config.config_quadruped as config_quadruped
+import mpx.config.config_aliengo as config_aliengo
 
 class Console():
     def __init__(self, controller_node):
@@ -15,13 +15,13 @@ class Console():
 
         # Go Up and Go Down motion
         self.isDown = True
-        self.height_delta = config_quadruped.robot_height
+        self.height_delta = config_aliengo.robot_height
 
         # Pitch Up and Pitch Down
         self.pitch_delta = 0
 
         # Step Height holder to keep track of the step height
-        self.step_height_holder = config_quadruped.step_height
+        self.step_height_holder = config_aliengo.step_height
 
         # Autocomplete setup
         self.commands = [
@@ -52,7 +52,7 @@ class Console():
                     print("Starting Walking")
                     self.walking = True
                     self.controller_node.mpc.walking = True
-                    self.controller_node.mpc.duty_factor = config_quadruped.duty_factor
+                    self.controller_node.mpc.duty_factor = config_aliengo.duty_factor
                 elif(input_string == "ooo"):
                     print("Stopping Walking")
                     self.walking = False

@@ -20,7 +20,7 @@ import copy
 from gym_quadruped.utils.mujoco.visual import render_sphere, render_vector
  
 import utils.mpc_wrapper as mpc_wrapper
-import config.config_quadruped as config
+import mpx.config.config_aliengo as config
 
 from timeit import default_timer as timer
 # Set GPU device for JAX
