@@ -6,7 +6,7 @@
 <div align="center">
   <a href="#Installation"><b>Installation</b></a> |
   <a href=""><b>PrePrint</b></a> |
-  <a href="https://www.youtube.com/watch?v=Yar4W-Vlh2A"><b>Video</b></a> |
+  <a href="https://youtu.be/zquKLxbAU_Y"><b>Video</b></a> |
   
 </div>
 
