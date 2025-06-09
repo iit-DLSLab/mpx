@@ -61,7 +61,7 @@ The first time running the script it can take more than a minute to JIT the solv
 ## Citing this work
 
 ```bibtex
-@INPROCEEDINGS{mpc,
+@ARTICLE{mpc,
       title={Primal-Dual iLQR for GPU-Accelerated Learning and Control in Legged Robots}, 
       author={Lorenzo Amatucci and João Sousa-Pinto and Giulio Turrisi and, Dominique Orban and  Victor Barasuol and Claudio Semini},
        booktitle={},
