@@ -280,18 +280,18 @@ class MPCControllerWrapper:
         self.collision = [0,0,0,0]
         self.collision_cycle = np.zeros(config.n_contact)
 
-    def run(self, qpos, qvel, input,contact):
+    def run(self, qpos, qvel, input, contact):
         """
-        Runs one MPC update using the current state, input, and foot positions.
+        Runs one MPC update using the current state positions, velocities, input, and contact information.
 
         Args:
-            x0: Current system state vector.
-            input: Input
-            foot_op: Flattened current foot positions vector.
+            qpos: Generalized position.
+            qvel: Generalized velocity.
+            input: Control input vector.
+            contact: Contact state vector.
 
         Returns:
-            A tuple (X, U, V) representing the computed state trajectory, control sequence,
-            and auxiliary variable trajectory.
+            A tuple (tau, q, dq) representing the computed joint torques, joint positions, and joint velocities.
         """
         self.contact = contact.copy()
         #get forward kinematics for foot position
