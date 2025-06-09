@@ -108,7 +108,7 @@ def set_random_command(n_env, limits, key):
 # Prepare initial batch data
 qpos0 = jnp.tile(jnp.concatenate([config.p0, config.quat0, config.q0]), (n_env, 1))
 batch_data = jax.vmap(lambda x: mjx_data.replace(qpos=x))(qpos0)
-command_limits = [(-0.2, 0.5), (-0.1, 0.1), (-0.2, 0.2)]
+command_limits = [(-0.2, 0.2), (-0.1, 0.1), (-0.2, 0.2)]
 rng_key = jax.random.PRNGKey(0)
 # Containers for collected data
 action = jnp.zeros((n_env, config.n_joints))
