@@ -1,6 +1,8 @@
 # MPX - Model Predictive Control in JAX
-![Image](https://github.com/user-attachments/assets/de8b9650-684e-4f31-82e4-9a0035f50f8e)
-![Image](https://github.com/user-attachments/assets/b7d7ab13-9e3b-4cc1-acf3-200ae3697af8)
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/de8b9650-684e-4f31-82e4-9a0035f50f8e" width="45%" />
+  <img src="https://github.com/user-attachments/assets/b7d7ab13-9e3b-4cc1-acf3-200ae3697af8" width="45%" />
+</p>
 <div align="center">
   <a href="#Installation"><b>Installation</b></a> |
   <a href=""><b>PrePrint</b></a> |
