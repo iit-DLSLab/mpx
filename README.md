@@ -5,7 +5,7 @@
 </p>
 <div align="center">
   <a href="#Installation"><b>Installation</b></a> |
-  <a href=""><b>PrePrint</b></a> |
+  <a href="https://arxiv.org/abs/2506.07823"><b>PrePrint</b></a> |
   <a href="https://youtu.be/zquKLxbAU_Y"><b>Video</b></a> |
   
 </div>
