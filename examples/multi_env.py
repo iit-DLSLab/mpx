@@ -123,7 +123,6 @@ while env.viewer.is_running():
         batch_data = step(mjx_model, batch_data, action)
         _, _, batch_foot = set_inputs(batch_data, batch_command)
         mpc.reset(jnp.arange(n_env),batch_foot)
-        start = timer()
         for t in range(int(episode_length * sim_frequency)):
             if t % int(sim_frequency/mpc_frequency) == 0:
                 # compute inputs and run MPC
@@ -146,6 +145,3 @@ while env.viewer.is_running():
                 env.render()
                 stop_render = timer()
                 print(f"Render time: {stop_render - start_render:.4f} seconds")
-        stop = timer()
-        print(f"Episode time: {stop - start:.2f} seconds")
-        print(f"Real time factor: {episode_length * n_env / (stop - start):.2f}")
