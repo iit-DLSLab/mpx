@@ -11,7 +11,20 @@
 </div>
 
 This repo implements the code for legged robot mpc and trajectory Optimization all in jax. 
- The solver is wrapped by the `MPCControllerWrapper` class, and all the settings (such as the dynamics model and cost function to be used) can be changed in the config files. Examples for various legged robot are provided in the `examples` folder.
+## Features
+**MPX** is JAX library which provides:
+
+✅ **True GPU Parallelism**
+Exploits both temporal and state-space parallel scans directly on the GPU, without approximations or offline precomputations. Lower the complexity to $\mathcal{O}(n\log{N} + m)$  from the classical $\mathcal{O}(N(n + m)^3)$ where n = state dim, m = control dim, N = horizon length
+
+✅ **JAX Autodiff & Vectorization**
+Fully differentiable solver easily integrates into learning pipelines and supports batched RL-style environments.
+
+✅ **A multiple-shooting SQP** formulation solves the KKT system in parallel, maintaining exactness and fast convergence.
+
+✅ **MJX MODELS** Support mjx whole body dynamics (included examples with **Talos**, **H1**, **Aliengo** and **Go2**)
+
+The solver is wrapped by the `MPCControllerWrapper` class, and all the settings (such as the dynamics model and cost function to be used) can be changed in the config files. Examples for various legged robot are provided in the `examples` folder.
 > **Note:**  
 > If you want to solve multile MPC in parallel use `BatchedMPCControllerWrapper` look at the examples/multi_env.py
 > `MPCControllerWrapper` and `BatchedMPCControllerWrapper` are designed for to use the whole body model if you want to the srbd model use `mpc_wrapper_srbd.py` look at examples/srbd_quad.py
