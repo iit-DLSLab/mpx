@@ -1,7 +1,8 @@
 # MPX - Model Predictive Control in JAX
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/de8b9650-684e-4f31-82e4-9a0035f50f8e" width="45%" />
-  <img src="https://github.com/user-attachments/assets/b7d7ab13-9e3b-4cc1-acf3-200ae3697af8" width="45%" />
+  <img src="https://github.com/user-attachments/assets/de8b9650-684e-4f31-82e4-9a0035f50f8e" width="48%" />
+  
+  <img src="https://github.com/user-attachments/assets/22d8fcd2-32f4-41c5-acb6-7eedf1bc66ee" width="48%" />
 </p>
 <div align="center">
   <a href="#Installation"><b>Installation</b></a> |
@@ -10,9 +11,9 @@
   
 </div>
 
-This repo implements the code for legged robot mpc and trajectory Optimization all in jax. 
+This repo implements the code for legged robot MPC and Trajectory Optimization all in jax. 
 ## Features
-**MPX** is JAX library which provides:
+**MPX** is a JAX library that provides:
 
 ✅ **True GPU Parallelism**
 Exploits both temporal and state-space parallel scans directly on the GPU, without approximations or offline precomputations. Lower the complexity to $\mathcal{O}(n\log{N} + m)$  from the classical $\mathcal{O}(N(n + m)^3)$ where n = state dim, m = control dim, N = horizon length
