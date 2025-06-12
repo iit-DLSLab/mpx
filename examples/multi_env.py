@@ -3,7 +3,6 @@ import sys
 dir_path = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.abspath(os.path.join(dir_path, '..')))
 import jax
-jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import numpy as np
 import mujoco
@@ -11,8 +10,9 @@ from mujoco import mjx
 import mujoco.viewer
 from timeit import default_timer as timer
 import utils.mpc_wrapper as mpc_wrapper
-import config.config_go2 as config
-from gym_quadruped.quadruped_env import QuadrupedEnv
+import config.config_talos as config
+# from gym_quadruped.quadruped_env import QuadrupedEnv
+from gym_quadruped.utils.mujoco.visual import render_ghost_robot
 from functools import partial
 import math
 # -- JAX setup --------------------------------------------------------------
@@ -20,32 +20,10 @@ gpu_device = jax.devices('gpu')[0]
 jax.default_device(gpu_device)
 jax.config.update("jax_compilation_cache_dir", "./jax_cache")
 # --------------------------------------------------------------------------
-robot_name = "go2"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
-scene_name = "flat"
-robot_feet_geom_names = dict(FR='FR',FL='FL', RR='RR' , RL='RL')
-robot_leg_joints = dict(FR=['FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint', ],
-                        FL=['FL_hip_joint', 'FL_thigh_joint', 'FL_calf_joint', ],
-                        RR=['RR_hip_joint', 'RR_thigh_joint', 'RR_calf_joint', ],
-                        RL=['RL_hip_joint', 'RL_thigh_joint', 'RL_calf_joint'])
-mpc_frequency = config.mpc_frequency
-state_observables_names = tuple(QuadrupedEnv.ALL_OBS)  # return all available state observables
- 
-# Initialize simulation environment
-sim_frequency = 200.0
-env = QuadrupedEnv(robot=robot_name,
-                   scene=scene_name,
-                   sim_dt = 1/sim_frequency,  # Simulation time step [s]
-                   ref_base_lin_vel=0.0, # Constant magnitude of reference base linear velocity [m/s]
-                   ground_friction_coeff=0.7,  # pass a float for a fixed value
-                   base_vel_command_type="human",  # "forward", "random", "forward+rotate", "human"
-                   state_obs_names=state_observables_names,  # Desired quantities in the 'state'
-                   )
-obs = env.reset(random=False)
-env.render()
 
 # Simulation parameters
 n_env = 64
-sim_frequency = 200.0
+sim_frequency = 500.0
 mpc_frequency = config.mpc_frequency
 episode_length = 10.0  # seconds
 n_episodes = 10
@@ -54,7 +32,7 @@ offset_x = jnp.tile(jnp.arange(robots_per_row),(1,robots_per_row)).flatten()
 offset_y = jnp.tile(jnp.arange(robots_per_row),(robots_per_row,1)).T.flatten()
 offset = jnp.concatenate([offset_x[:, None], offset_y[:, None], jnp.zeros((n_env, 5 + config.n_joints))], axis=-1)
 # Build model and data
-model = mujoco.MjModel.from_xml_path(dir_path + '/../data/go2/scene_mjx.xml')
+model = mujoco.MjModel.from_xml_path(dir_path + '/../data/pal_talos/scene_motor.xml')
 data = mujoco.MjData(model)
 model.opt.timestep = 1/sim_frequency
 
@@ -77,8 +55,7 @@ mjx_data = mjx.put_data(model, data)
 mjx_contact_id = [mjx.name2id(mjx_model, mujoco.mjtObj.mjOBJ_GEOM, name)
                   for name in config.contact_frame]
 
-# JIT-compiled stepping
-@jax.jit
+
 def _mjx_step(model, data, action):
     tau_fb = -3 * (data.qvel[6:6+config.n_joints])
     data = data.replace(ctrl=tau_fb + action)
@@ -97,7 +74,7 @@ def _set_inputs_helper(data, command,mjx_contact_id):
 step = jax.jit(jax.vmap(_mjx_step, in_axes=(None,0,0)))
 
 _set_inputs = partial(_set_inputs_helper, mjx_contact_id=mjx_contact_id)
-set_inputs = jax.vmap(_set_inputs)
+set_inputs = jax.jit(jax.vmap(_set_inputs))
 
 # Random command generator
 def set_random_command(n_env, limits, key):
@@ -113,7 +90,23 @@ rng_key = jax.random.PRNGKey(0)
 # Containers for collected data
 action = jnp.zeros((n_env, config.n_joints))
 # Launch viewer and simulate
-while env.viewer.is_running():
+viewer = mujoco.viewer.launch_passive(model, data)
+temp_data = data
+ids = []
+# Initialize ghost robots
+for idx in range(n_env):
+    temp_data.qpos = temp_data.qpos
+    mujoco.mj_forward(model, temp_data)
+    # Render each robot
+    ids.append(render_ghost_robot(
+        viewer,
+        model,
+        temp_data,
+        alpha = 1,
+    )
+    )
+viewer.sync()
+while viewer.is_running():
     for _ in range(n_episodes):
         # Generate random command
         rng_key, subkey_cmd, subkey_gait = jax.random.split(rng_key,num=3)
@@ -140,12 +133,16 @@ while env.viewer.is_running():
             # step env
             batch_data = step(mjx_model, batch_data, action)
             if t % int(sim_frequency/mpc_frequency) == 0:
-                start_render = timer()
                 batch_robots = batch_data.qpos + offset
-                env._render_ghost_robots(batch_robots,1.0)
-                env.render()
-                stop_render = timer()
-                print(f"Render time: {stop_render - start_render:.4f} seconds")
-        stop = timer()
-        print(f"Episode time: {stop - start:.2f} seconds")
-        print(f"Real time factor: {episode_length * n_env / (stop - start):.2f}")
+                for idx in range(n_env):
+                    temp_data.qpos = batch_robots[idx]
+                    mujoco.mj_forward(model, temp_data)
+                    # Render each robot
+                    render_ghost_robot(
+                        viewer,
+                        model,
+                        temp_data,
+                        alpha = 1,
+                        ghost_geoms = ids[idx],
+                    )
+                viewer.sync()

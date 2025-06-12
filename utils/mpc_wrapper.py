@@ -338,7 +338,6 @@ class MPCControllerWrapper:
             self.U0,
             self.V0
             )
-        X.block_until_ready()
 
         # # Warm-start for the next call: shift trajectories forward.
 
