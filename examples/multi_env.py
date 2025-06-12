@@ -85,7 +85,7 @@ def set_random_command(n_env, limits, key):
 # Prepare initial batch data
 qpos0 = jnp.tile(jnp.concatenate([config.p0, config.quat0, config.q0]), (n_env, 1))
 batch_data = jax.vmap(lambda x: mjx_data.replace(qpos=x))(qpos0)
-command_limits = [(-0.2, 0.5), (-0.1, 0.1), (-0.2, 0.2)]
+command_limits = [(-0.2, 0.2), (-0.1, 0.1), (-0.2, 0.2)]
 rng_key = jax.random.PRNGKey(0)
 # Containers for collected data
 action = jnp.zeros((n_env, config.n_joints))
@@ -116,7 +116,6 @@ while viewer.is_running():
         batch_data = step(mjx_model, batch_data, action)
         _, _, batch_foot = set_inputs(batch_data, batch_command)
         mpc.reset(jnp.arange(n_env),batch_foot)
-        start = timer()
         for t in range(int(episode_length * sim_frequency)):
             if t % int(sim_frequency/mpc_frequency) == 0:
                 # compute inputs and run MPC
