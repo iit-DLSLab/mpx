@@ -1,4 +1,9 @@
-# MPX - Model Predictive Control in JAX
+<p align="left">
+ <img src="https://github.com/user-attachments/assets/faaee057-131d-47da-b841-8832d536e5c5" width="70%" /> 
+</p>
+
+This repo implements the code for legged robot MPC and Trajectory Optimization all in JAX. 
+
 <p align="center">
   <img src="https://github.com/user-attachments/assets/de8b9650-684e-4f31-82e4-9a0035f50f8e" width="48%" />
   
@@ -11,7 +16,7 @@
   
 </div>
 
-This repo implements the code for legged robot MPC and Trajectory Optimization all in jax. 
+
 ## Features
 **MPX** is a JAX library that provides:
 
