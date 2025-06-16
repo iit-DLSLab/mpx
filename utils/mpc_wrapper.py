@@ -164,7 +164,7 @@ class BatchedMPCControllerWrapper:
         contact_time = data.contact_time.at[envs,:].set(jnp.tile(config.timer_t, (n_env_reset, 1)))
         liftoff = data.liftoff.at[envs,:].set(foot)
         U0 = jnp.tile(config.u_ref, (config.N, 1))
-        X0 = jnp.tile(config.initial_state, (config.N + 1, 1))
+        X0 = jnp.tile(self.initial_state, (config.N + 1, 1))
         V0 = jnp.zeros((config.N + 1, config.n))
         batch_U0 = data.U0.at[envs,:,:].set(jnp.tile(U0, (n_env_reset, 1, 1)))
         batch_X0 = data.X0.at[envs,:,:].set(jnp.tile(X0, (n_env_reset, 1, 1)))
