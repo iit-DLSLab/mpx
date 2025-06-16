@@ -42,7 +42,12 @@ contact_id = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
 
 # MPC wrapper
 mpc = mpc_wrapper.BatchedMPCControllerWrapper(config, n_env)
-
+batch_mpc_data = jax.vmap(lambda _: mpc.make_data())(jnp.arange(n_env))
+def _solve_mpc(mpc_data, x0, input, foot_pos):
+    """Run MPC for a batch of environments."""
+    return mpc.run(mpc_data,  x0, input, foot_pos)
+solve_mpc = jax.jit(jax.vmap(_solve_mpc))
+# reset_mpc = jax.jit(mpc.reset)
 # Initialize state
 data.qpos = jnp.concatenate([config.p0, config.quat0, config.q0])
 mujoco.mj_kinematics(model, data)
@@ -115,20 +120,19 @@ while viewer.is_running():
         batch_data = jax.vmap(lambda x: mjx_data.replace(qpos=x, qvel=jnp.zeros(6+config.n_joints), ctrl = jnp.zeros(config.n_joints)))(qpos0)
         batch_data = step(mjx_model, batch_data, action)
         _, _, batch_foot = set_inputs(batch_data, batch_command)
-        mpc.reset(jnp.arange(n_env),batch_foot)
+        batch_mpc_data = mpc.reset(config,batch_mpc_data,jnp.arange(n_env),batch_foot)
         for t in range(int(episode_length * sim_frequency)):
             if t % int(sim_frequency/mpc_frequency) == 0:
                 # compute inputs and run MPC
                 batch_x0, batch_input, batch_foot = set_inputs(batch_data, batch_command)
                 start_mpc = timer()
-                _, U, _ = mpc.run(batch_x0, batch_input, batch_foot)
-                U.block_until_ready()
+                # _, U, _ = mpc.run(batch_x0, batch_input, batch_foot)
+                batch_mpc_data, tau = solve_mpc(
+                    batch_mpc_data, batch_x0, batch_input, batch_foot)
+                tau.block_until_ready()
                 stop_mpc = timer()
-                print(f"MPC time: {stop_mpc - start_mpc:.4f} seconds")
-                
-                action = U[:, 0, :config.n_joints]
-            
-                
+                print(f"MPC time: {stop_mpc - start_mpc:.4f} seconds") 
+                action = tau    
             # step env
             batch_data = step(mjx_model, batch_data, action)
             if t % int(sim_frequency/mpc_frequency) == 0:
