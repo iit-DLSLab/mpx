@@ -11,29 +11,12 @@ jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 
 import numpy as np
-
-from trajax import integrators
-from trajax.experimental.sqp import util
-
-import  primal_dual_ilqr.primal_dual_ilqr.optimizers as optimizers
-from functools import partial
-
-from jax import grad, jvp
-
-
-from jax.scipy.spatial.transform import Rotation
-
-
-from utils.rotation import quaternion_integration,rpy_intgegration,quaternion_to_rpy,rotation_matrix_to_quaternion
-
 import mujoco
-from mujoco import mjx
-from mujoco.mjx._src import math
 import mujoco.viewer
 import numpy as np
 # from gym_quadruped.utils.mujoco.visual import render_sphere ,render_vector
-import utils.mpc_wrapper as mpc_wrapper
-import config.config_h1 as config
+import mpx.utils.mpc_wrapper as mpc_wrapper
+import mpx.config.config_h1 as config
 
 model = mujoco.MjModel.from_xml_path(dir_path + '/../data/unitree_h1/mjx_scene_h1_walk.xml')
 data = mujoco.MjData(model)

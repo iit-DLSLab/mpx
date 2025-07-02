@@ -1,15 +1,5 @@
 import os
 import sys
-import time
-dir_path = os.path.dirname(os.path.realpath(__file__))
-sys.path.append(os.path.abspath(os.path.join(dir_path, '..')))
-# os.environ['XLA_FLAGS'] = (
-    # '--xla_gpu_enable_triton_softmax_fusion=true '
-    # '--xla_gpu_triton_gemm_any=True '
-    # '--xla_gpu_enable_async_collectives=true '
-    # '--xla_gpu_enable_latency_hiding_scheduler=true '
-    # '--xla_gpu_enable_highest_priority_async_stream=true '
-# )
 os.environ.update({
   "NCCL_LL128_BUFFSIZE": "-2",
   "NCCL_LL_BUFFSIZE": "-2",
@@ -19,25 +9,14 @@ import jax.numpy as jnp
 import jax
 
 import numpy as np
-
-import  primal_dual_ilqr.primal_dual_ilqr.optimizers as optimizers
-from functools import partial
-from timeit import default_timer as timer
-from mujoco import mjx
-
-import utils.mpc_utils as mpc_utils
-import utils.models as mpc_dyn_model
-import utils.objectives as mpc_objectives
-import config.config_srbd as config
-import utils.mpc_wrapper_srbd as mpc_wrapper_srbd
+import mpx.config.config_srbd as config
+import mpx.utils.mpc_wrapper_srbd as mpc_wrapper_srbd
 
 gpu_device = jax.devices('gpu')[0]
 jax.default_device(gpu_device)
 
 from gym_quadruped.quadruped_env import QuadrupedEnv
 import numpy as np
-import copy
-import mujoco
 from gym_quadruped.utils.mujoco.visual import render_sphere , render_vector
 
 

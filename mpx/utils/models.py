@@ -2,13 +2,6 @@ import jax
 from jax import numpy as jnp
 from mujoco import mjx
 from mujoco.mjx._src import math
-from mujoco.mjx._src import smooth
-import os
-import sys
-import time
-dir_path = os.path.dirname(os.path.realpath(__file__))
-sys.path.append(os.path.abspath(os.path.join(dir_path, '..')))
-from utils.rotation import rpy_intgegration
 
 def quadruped_srbd_dynamics(mass, inertia,inertia_inv, dt, x, u, t,parameter):
     # Extract state variables

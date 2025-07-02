@@ -9,8 +9,8 @@ import mujoco
 from mujoco import mjx
 import mujoco.viewer
 from timeit import default_timer as timer
-import utils.mpc_wrapper as mpc_wrapper
-import config.config_talos as config
+import mpx.utils.mpc_wrapper as mpc_wrapper
+import mpx.config.config_talos as config
 # from gym_quadruped.quadruped_env import QuadrupedEnv
 from gym_quadruped.utils.mujoco.visual import render_ghost_robot
 from functools import partial

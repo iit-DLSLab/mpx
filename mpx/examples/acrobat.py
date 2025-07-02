@@ -10,16 +10,7 @@ os.environ.update({
 import jax.numpy as jnp
 import jax
 
-import numpy as np
-
-from trajax import integrators
-from trajax.experimental.sqp import util
-
-import  primal_dual_ilqr.primal_dual_ilqr.optimizers as optimizers
-from functools import partial
-
-from jax import grad, jvp
-
+import  mpx.primal_dual_ilqr.primal_dual_ilqr.optimizers as optimizers
 # Problem dimensions
 N = 100  # Number of stages
 n = 4    # Number of states (theta1, theta1_dot, theta2, theta2_dot)

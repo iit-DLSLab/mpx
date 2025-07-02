@@ -1,10 +1,9 @@
 import jax.numpy as jnp
 import jax 
-import utils.models as mpc_dyn_model
-import utils.objectives as mpc_objectives
-import utils.mpc_utils as mpc_utils
+import mpx.utils.models as mpc_dyn_model
+import mpx.utils.objectives as mpc_objectives
+import mpx.utils.mpc_utils as mpc_utils
 import os 
-import sys 
 from functools import partial
 
 dir_path = os.path.dirname(os.path.realpath(__file__))

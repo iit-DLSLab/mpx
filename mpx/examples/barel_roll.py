@@ -1,7 +1,3 @@
-import os
-import sys
-dir_path = os.path.dirname(os.path.realpath(__file__))
-sys.path.append(os.path.abspath(os.path.join(dir_path, '..')))
 import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
@@ -14,18 +10,15 @@ jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 # jax.config.update("jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir")
  
 import numpy as np
-import primal_dual_ilqr.primal_dual_ilqr.optimizers as optimizers
-from functools import partial
 from gym_quadruped.quadruped_env import QuadrupedEnv
 import copy
 from gym_quadruped.utils.mujoco.visual import render_sphere, render_vector,render_ghost_robot 
  
-import utils.mpc_wrapper as mpc_wrapper
-import config.config_barrel_roll as config
+import mpx.utils.mpc_wrapper as mpc_wrapper
+import mpx.config.config_barrel_roll as config
 
 from timeit import default_timer as timer
 import time
-import pickle
 # Set GPU device for JAX
 # gpu_device = jax.devices('gpu')[0]
 # jax.default_device(gpu_device)
