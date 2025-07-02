@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mpx"
+version = "0.1"
+description = "Model Predictive Control in JAX"
+authors = [
+    { name = "Amatucci Lorenzo" }
+]
+license = { text = "BSD-3-Clause" }
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "jax[cuda12]==0.6.1",
+    "mujoco==3.3.0",
+    "mujoco-mjx==3.3.0",
+    "gym-quadruped==0.0.6",
+    "trajax @ git+https://github.com/google/trajax"
+]
+
+[project.urls]
+Homepage = "https://github.com/iit-DLSLab/mpx"
+
+[tool.hatch.metadata]
+allow-direct-references = true
