@@ -41,11 +41,11 @@ contact_id = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
               for name in config.contact_frame]
 
 # MPC wrapper
-mpc = mpc_wrapper.BatchedMPCControllerWrapper(config, n_env)
+mpc = mpc_wrapper.BatchedMPCControllerWrapper(config, n_env,limited_memory=True)
 batch_mpc_data = jax.vmap(lambda _: mpc.make_data())(jnp.arange(n_env))
-def _solve_mpc(mpc_data, x0, input, foot_pos):
+def _solve_mpc(mpc_data, x0, input):
     """Run MPC for a batch of environments."""
-    return mpc.run(mpc_data,  x0, input, foot_pos)
+    return mpc.run(mpc_data,  x0, input)
 solve_mpc = jax.jit(jax.vmap(_solve_mpc))
 # reset_mpc = jax.jit(mpc.reset)
 # Initialize state
@@ -124,11 +124,11 @@ while viewer.is_running():
         for t in range(int(episode_length * sim_frequency)):
             if t % int(sim_frequency/mpc_frequency) == 0:
                 # compute inputs and run MPC
-                batch_x0, batch_input, batch_foot = set_inputs(batch_data, batch_command)
+                batch_x0, batch_input, _ = set_inputs(batch_data, batch_command)
                 start_mpc = timer()
                 # _, U, _ = mpc.run(batch_x0, batch_input, batch_foot)
                 batch_mpc_data, tau = solve_mpc(
-                    batch_mpc_data, batch_x0, batch_input, batch_foot)
+                    batch_mpc_data, batch_x0, batch_input)
                 tau.block_until_ready()
                 stop_mpc = timer()
                 print(f"MPC time: {stop_mpc - start_mpc:.4f} seconds") 

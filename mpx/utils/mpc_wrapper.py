@@ -27,7 +27,7 @@ class mpx_data(PyTreeNode):
     W : jnp.ndarray # Weight matrix for the MPC controller
 
 class BatchedMPCControllerWrapper:
-    def __init__(self, config, n_env):
+    def __init__(self, config, n_env,limited_memory=False):
         """
         Initializes the MPC controller wrapper.
 
@@ -71,11 +71,32 @@ class BatchedMPCControllerWrapper:
                                 model, mjx_model, self.contact_id, self.body_id,
                                 config.n_joints, config.dt)
 
-        self.work = partial(optimizers.mpc, cost, dynamics, hessian_approx, True)
+        self.work = partial(optimizers.mpc, cost, dynamics, hessian_approx, limited_memory)
 
         self.reference_generator = partial(mpc_utils.reference_generator,
             config.use_terrain_estimation ,config.N, config.dt, config.n_joints, config.n_contact, robot_mass, foot0 = config.p_legs0, q0 = config.q0,clearence_speed = 0.2)
 
+        def update_and_extract_helper(U, X, V, x0, X0, U0):
+            def safe_update():
+                new_U0 = jnp.concatenate([U[self.shift:], jnp.tile(U[-1:], (self.shift, 1))])
+                new_X0 = jnp.concatenate([X[self.shift:], jnp.tile(X[-1:], (self.shift, 1))])
+                new_V0 = jnp.concatenate([V[self.shift:], jnp.tile(V[-1:], (self.shift, 1))])
+                tau = U[0, :config.n_joints]
+                q = X[0, 7:config.n_joints + 7]
+                dq = X[1, 13 + config.n_joints:2 * config.n_joints + 13]
+                return new_U0, new_X0, new_V0,tau,q ,dq
+            def unsafe_update():
+                new_U0 = jnp.tile(self.config.u_ref, (self.config.N, 1))
+                new_X0 = jnp.tile(x0, (self.config.N + 1, 1))
+                new_V0 = jnp.zeros((self.config.N + 1, self.config.n ))
+                tau = U0[1, :config.n_joints]
+                q = X0[1, 7:config.n_joints + 7]
+                dq = X0[1, 13 + config.n_joints:2 * config.n_joints + 13]
+                return new_U0, new_X0, new_V0, tau, q, dq
+            return jax.lax.cond(jnp.isnan(U[0,0]),unsafe_update,safe_update)
+        
+        self.update_and_extract = update_and_extract_helper
+    
     def make_data(self):
         return mpx_data(
             dt = self.config.dt,
@@ -90,7 +111,7 @@ class BatchedMPCControllerWrapper:
             W = self.config.W
         )
     
-    def run(self,data, x0, input, foot_op):
+    def run(self,data, x0, input):
         """
         Runs one MPC update using the current state, input, and foot positions.
 
@@ -118,7 +139,7 @@ class BatchedMPCControllerWrapper:
             step_height = data.step_height,
             t_timer = data.contact_time,
             x = x0,
-            foot = foot_op,
+            foot = x0[13+2*self.config.n_joints:13+2*self.config.n_joints + 3*self.config.n_contact],
             input = input,
             liftoff = data.liftoff,
             contact = contact,
@@ -135,14 +156,16 @@ class BatchedMPCControllerWrapper:
             data.V0
             )
 
+        U0, X0, V0, tau, _, _ = self.update_and_extract(U, X, V, x0, data.X0, data.U0)
+
         # Warm-start for the next call: shift trajectories forward.
-        data = data.replace(X0 = jnp.concatenate([X[self.shift:], jnp.tile(X[-1:], (self.shift, 1))]),
-                            U0 = jnp.concatenate([U[self.shift:], jnp.tile(U[-1:], (self.shift, 1))]),
-                            V0 = jnp.concatenate([V[self.shift:], jnp.tile(V[-1:], (self.shift, 1))]),
+        data = data.replace(X0 = X0,
+                            U0 = U0,
+                            V0 = V0,
                             contact_time = contact_time,
                             liftoff = liftoff)
 
-        return data, U[0,:self.config.n_joints]
+        return data, tau
 
     def reset(self,config,data,envs,foot):
         """
@@ -165,7 +188,7 @@ class BatchedMPCControllerWrapper:
         return data
 
 class MPCControllerWrapper:
-    def __init__(self, config):
+    def __init__(self, config,limited_memory=False):
         """
         Initializes the MPC controller wrapper.
 
@@ -214,7 +237,7 @@ class MPCControllerWrapper:
                                 self.model, mjx_model, self.contact_id, self.body_id,
                                 config.n_joints, config.dt)
 
-        work = partial(optimizers.mpc, self.cost, self.dynamics, hessian_approx, False)
+        work = partial(optimizers.mpc, self.cost, self.dynamics, hessian_approx, limited_memory)
 
         reference_generator = partial(mpc_utils.reference_generator,
             config.use_terrain_estimation ,config.N, config.dt, config.n_joints, config.n_contact, robot_mass,foot0 = config.p_legs0, q0 = config.q0)
