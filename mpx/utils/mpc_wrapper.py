@@ -63,18 +63,16 @@ class BatchedMPCControllerWrapper:
         for name in config.body_name:
             self.body_id.append(mjx.name2id(mjx_model,mujoco.mjtObj.mjOBJ_BODY,name))
         # Define cost, hessian approximation, and dynamics functions for MPC.
-        cost = partial(config.cost,
-                            config.n_joints, config.n_contact, config.N)
-        hessian_approx = partial(config.hessian_approx,
-                            config.n_joints, config.n_contact)
+        cost = config.cost
+        hessian_approx = config.hessian_approx
         dynamics = partial(config.dynamics,
                                 model, mjx_model, self.contact_id, self.body_id,
                                 config.n_joints, config.dt)
 
         self.work = partial(optimizers.mpc, cost, dynamics, hessian_approx, limited_memory)
 
-        self.reference_generator = partial(mpc_utils.reference_generator,
-            config.use_terrain_estimation ,config.N, config.dt, config.n_joints, config.n_contact, robot_mass, foot0 = config.p_legs0, q0 = config.q0,clearence_speed = 0.2)
+        self.reference_generator = partial(mpc_utils.simple_reference_generator,
+            config.use_terrain_estimation ,config.N, config.dt, config.n_contact, q0 = config.q0)
 
         def update_and_extract_helper(U, X, V, x0, X0, U0):
             def safe_update():
@@ -92,7 +90,7 @@ class BatchedMPCControllerWrapper:
                 tau = U0[1, :config.n_joints]
                 q = X0[1, 7:config.n_joints + 7]
                 dq = X0[1, 13 + config.n_joints:2 * config.n_joints + 13]
-                return new_U0, new_X0, new_V0, tau, q, dq
+                return new_U0, new_X0, new_V0, tau, q, dq 
             return jax.lax.cond(jnp.isnan(U[0,0]),unsafe_update,safe_update)
         
         self.update_and_extract = update_and_extract_helper
@@ -111,38 +109,33 @@ class BatchedMPCControllerWrapper:
             W = self.config.W
         )
     
-    def run(self,data, x0, input):
+    def run(self, data, state,parameter):
         """
         Runs one MPC update using the current state, input, and foot positions.
 
         Args:
-            config: Configuration object containing MPC solver and reference generator.
             data: mpx_data object containing the current state of the MPC controller.
-            x0: Current system state vector.
-            input: Input
-            foot_op: Flattened current foot positions vector.
+            state: robot state + desired input
+            parameter: paremeters for the parametric controller.
 
         Returns:
-            A tuple (X, U, V) representing the computed state trajectory, control sequence,
-            and auxiliary variable trajectory.
+            
+            next data: mpx_data object containing the new state of the MPC controller
+            tau the output torque from the mpc
+
         """
-
+        x0 = state[:self.config.n]
+        input = state[self.config.n:]
         # Update the timer state for the gait reference.
-        _ , contact_time = mpc_utils.timer_run(data.duty_factor,data.step_freq,data.contact_time,1/self.mpc_frequency)
+        # _ , contact_time = mpc_utils.timer_run(data.duty_factor,data.step_freq,data.contact_time,1/self.mpc_frequency)
 
-        contact = jnp.zeros(self.config.n_contact)
+        # contact = jnp.zeros(self.config.n_contact)
 
         # Generate reference trajectory and additional MPC parameters.
-        reference, parameter, liftoff = self.reference_generator(
-            duty_factor = data.duty_factor,
-            step_freq = data.step_freq,
-            step_height = data.step_height,
-            t_timer = data.contact_time,
+        reference, liftoff = self.reference_generator(
             x = x0,
-            foot = x0[13+2*self.config.n_joints:13+2*self.config.n_joints + 3*self.config.n_contact],
             input = input,
-            liftoff = data.liftoff,
-            contact = contact,
+            liftoff = data.liftoff
         )
 
         # Execute the MPC optimization (work function).
@@ -156,13 +149,13 @@ class BatchedMPCControllerWrapper:
             data.V0
             )
 
-        U0, X0, V0, tau, _, _ = self.update_and_extract(U, X, V, x0, data.X0, data.U0)
+        U0, X0, V0, tau, _, _= self.update_and_extract(U, X, V, x0, data.X0, data.U0)
+
 
         # Warm-start for the next call: shift trajectories forward.
         data = data.replace(X0 = X0,
                             U0 = U0,
                             V0 = V0,
-                            contact_time = contact_time,
                             liftoff = liftoff)
 
         return data, tau
@@ -358,7 +351,7 @@ class MPCControllerWrapper:
         q = np.array(q_temp)
         dq = np.array(dq_temp)
 
-        return tau, q, dq 
+        return tau, q, dq, reference , U[:,self.config.n_joints:],foot_op,X
 
     def reset(self,qpos,qvel):
         """
