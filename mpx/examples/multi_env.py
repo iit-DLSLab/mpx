@@ -47,7 +47,7 @@ def _solve_mpc(mpc_data, x0, input):
     """Run MPC for a batch of environments."""
     return mpc.run(mpc_data,  x0, input)
 solve_mpc = jax.jit(jax.vmap(_solve_mpc))
-# reset_mpc = jax.jit(mpc.reset)
+mpc_reset = jax.jit(jax.vmap(mpc.reset, in_axes = (0,0,0,0)))
 # Initialize state
 data.qpos = jnp.concatenate([config.p0, config.quat0, config.q0])
 mujoco.mj_kinematics(model, data)
@@ -120,13 +120,12 @@ while viewer.is_running():
         batch_data = jax.vmap(lambda x: mjx_data.replace(qpos=x, qvel=jnp.zeros(6+config.n_joints), ctrl = jnp.zeros(config.n_joints)))(qpos0)
         batch_data = step(mjx_model, batch_data, action)
         _, _, batch_foot = set_inputs(batch_data, batch_command)
-        batch_mpc_data = mpc.reset(config,batch_mpc_data,jnp.arange(n_env),batch_foot)
+        batch_mpc_data = mpc_reset(batch_mpc_data,batch_data.qpos,batch_data.qvel,batch_foot)
         for t in range(int(episode_length * sim_frequency)):
             if t % int(sim_frequency/mpc_frequency) == 0:
                 # compute inputs and run MPC
                 batch_x0, batch_input, _ = set_inputs(batch_data, batch_command)
                 start_mpc = timer()
-                # _, U, _ = mpc.run(batch_x0, batch_input, batch_foot)
                 batch_mpc_data, tau = solve_mpc(
                     batch_mpc_data, batch_x0, batch_input)
                 tau.block_until_ready()

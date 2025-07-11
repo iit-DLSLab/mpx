@@ -25,7 +25,7 @@ class mpx_data(PyTreeNode):
     U0: jnp.ndarray # Initial control input trajectory for the MPC controller
     V0: jnp.ndarray # Initial lagrangian for the MPC controller
     W : jnp.ndarray # Weight matrix for the MPC controller
-
+    grf: jnp.ndarray
 class BatchedMPCControllerWrapper:
     def __init__(self, config, n_env,limited_memory=False):
         """
@@ -108,7 +108,8 @@ class BatchedMPCControllerWrapper:
             X0 = jnp.tile(self.initial_state, (self.config.N + 1, 1)),
             U0 = jnp.tile(self.config.u_ref, (self.config.N, 1)),
             V0 = jnp.zeros((self.config.N + 1, self.config.n)),
-            W = self.config.W
+            W = self.config.W,
+            grf = jnp.zeros(3*self.config.n_contact)
         )
     
     def run(self,data, x0, input):
@@ -163,28 +164,31 @@ class BatchedMPCControllerWrapper:
                             U0 = U0,
                             V0 = V0,
                             contact_time = contact_time,
-                            liftoff = liftoff)
+                            liftoff = liftoff,
+                            grf = X0[0,13 + 2*self.config.n_joints + 3*self.config.n_contact:13 + 2*self.config.n_joints + 6*self.config.n_contact])
 
         return data, tau
 
-    def reset(self,config,data,envs,foot):
+    def reset(self,data,qpos,qvel,foot):
         """
         Resets the MPC controller state."
         """
-        n_env_reset = envs.shape[0]
-        contact_time = data.contact_time.at[envs,:].set(jnp.tile(config.timer_t, (n_env_reset, 1)))
-        liftoff = data.liftoff.at[envs,:].set(foot)
-        U0 = jnp.tile(config.u_ref, (config.N, 1))
-        X0 = jnp.tile(self.initial_state, (config.N + 1, 1))
-        V0 = jnp.zeros((config.N + 1, config.n))
-        batch_U0 = data.U0.at[envs,:,:].set(jnp.tile(U0, (n_env_reset, 1, 1)))
-        batch_X0 = data.X0.at[envs,:,:].set(jnp.tile(X0, (n_env_reset, 1, 1)))
-        batch_V0 = data.V0.at[envs,:,:].set(jnp.tile(V0, (n_env_reset, 1, 1)))
-        data = data.replace(U0=batch_U0,
-                     X0=batch_X0,
-                     V0=batch_V0,
+        contact_time = self.config.timer_t
+        liftoff = foot
+        if self.config.grf_as_state:
+            initial_state = jnp.concatenate([qpos,qvel,foot,jnp.zeros(3*self.config.n_contact)])
+        else:
+            initial_state = jnp.concatenate([qpos,qvel,foot])
+        U0 = jnp.tile(self.config.u_ref, (self.config.N, 1))
+        X0 = jnp.tile(initial_state, (self.config.N + 1, 1))
+        V0 = jnp.zeros((self.config.N + 1, self.config.n))
+        grf = jnp.zeros(3*self.config.n_contact)
+        data = data.replace(U0=U0,
+                     X0=X0,
+                     V0=V0,
                      contact_time=contact_time,
-                     liftoff=liftoff)
+                     liftoff=liftoff,
+                     grf = grf)
         return data
 
 class MPCControllerWrapper:
