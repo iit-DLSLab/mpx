@@ -16,7 +16,7 @@ dependencies = [
     "jax[cuda12]==0.6.1",
     "mujoco==3.3.0",
     "mujoco-mjx==3.3.0",
-    "gym-quadruped==0.0.6",
+    "gym-quadruped",
     "trajax @ git+https://github.com/google/trajax"
 ]
 
