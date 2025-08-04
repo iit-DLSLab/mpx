@@ -308,7 +308,7 @@ def whole_body_interface(model, mjx_model, contact_id, body_id,sim_frequency,Kp,
     tau_mpc = -(J@grf)[6:]
     tau_PD = (J @ cartesian_space_action)[6:]
     contact_mask = jnp.array([contact[0],contact[0],contact[0],contact[1],contact[1],contact[1],contact[2],contact[2],contact[2],contact[3],contact[3],contact[3]])
-    tau = tau_mpc*contact_mask + (1-contact_mask)*(tau_PD + tau_fb_lin) 
+    tau = tau_mpc*contact_mask + (1-contact_mask)*(tau_fb_lin) 
 
     return tau , J
 
