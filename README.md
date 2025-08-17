@@ -21,7 +21,7 @@ This repo implements the code for legged robot MPC and Trajectory Optimization a
 **MPX** is a [JAX](https://github.com/google/jax) library that provides:
 
 ✅ **True GPU Parallelism**
-Exploits both temporal and state-space parallel scans directly on the GPU, without approximations or offline precomputations. Lower the complexity to $\mathcal{O}(n\log{N} + m)$  from the classical $\mathcal{O}(N(n + m)^3)$ where n = state dim, m = control dim, N = horizon length
+Exploits both temporal and state-space parallel scans directly on the GPU, without approximations or offline precomputations. Lower the complexity to $\mathcal{O}(\log{n}\log{N} + \log{m})$  from the classical $\mathcal{O}(N(n + m)^3)$ where n = state dim, m = control dim, N = horizon length
 
 ✅ **JAX Autodiff & Vectorization**
 Fully differentiable solver easily integrates into learning pipelines and supports batched RL-style environments.
