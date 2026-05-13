@@ -4,6 +4,90 @@
 
 This repo implements the code for legged robot MPC and Trajectory Optimization all in JAX. 
 
+> **Experimental GRiD backend warning**
+>
+> Branch `experimetal_GriD_support` contains experimental support for using
+> [GRiD](https://github.com/robot-acceleration/GRiD) generated CUDA dynamics in
+> MPX. The default backend remains MJX unless a config or example explicitly
+> selects `dynamics_backend="grid"`. Treat the GRiD path as research code:
+> robot-specific CUDA libraries must be generated and rebuilt for the local
+> CUDA/JAX environment before running examples.
+>
+> Quick setup from a fresh checkout:
+>
+> ```bash
+> git submodule update --init --recursive
+> micromamba create -n mpx_env python=3.13 -y
+> micromamba run -n mpx_env pip install -e .
+> ```
+>
+> Build or rebuild the Z1 floating dynamics library from the MPX repository root:
+>
+> ```bash
+> micromamba run -n mpx_env python -m mpx.grid_codegen.mjcf_to_urdf \
+>   --mjcf mpx/data/unitree_z1/z1_floating.xml \
+>   --output build/grid/z1_floating/z1_floating_grid.urdf \
+>   --fixed-target ""
+>
+> micromamba run -n mpx_env python -m mpx.grid_codegen.generate \
+>   --urdf build/grid/z1_floating/z1_floating_grid.urdf \
+>   --robot-name z1_floating \
+>   --out-dir build/grid/z1_floating \
+>   --floating-base
+>
+> micromamba run -n mpx_env nvcc -std=c++17 -shared -Xcompiler=-fPIC -O3 \
+>   -gencode arch=compute_86,code=sm_86 \
+>   -I build/grid/z1_floating \
+>   -I "$(micromamba run -n mpx_env python - <<'PY'
+> import pathlib, jaxlib
+> print(pathlib.Path(jaxlib.__file__).parent / 'include')
+> PY
+> )" \
+>   -o build/grid/z1_floating/libmpx_grid_z1_floating.so \
+>   mpx/grid_codegen/z1_floating_jax_bridge.cu
+> ```
+>
+> Build the fixed-base Z1 kinematics library used by the GRiD cost path:
+>
+> ```bash
+> micromamba run -n mpx_env python -m mpx.grid_codegen.mjcf_to_urdf \
+>   --mjcf mpx/data/unitree_z1/z1.xml \
+>   --output build/grid/z1_fixed/z1_grid.urdf \
+>   --fixed-target end_effector
+>
+> micromamba run -n mpx_env python -m mpx.grid_codegen.generate \
+>   --urdf build/grid/z1_fixed/z1_grid.urdf \
+>   --robot-name z1 \
+>   --out-dir build/grid/z1_fixed \
+>   --fixed-targets end_effector
+>
+> micromamba run -n mpx_env nvcc -std=c++17 -shared -Xcompiler=-fPIC -O3 \
+>   -gencode arch=compute_86,code=sm_86 \
+>   -I build/grid/z1_fixed \
+>   -I "$(micromamba run -n mpx_env python - <<'PY'
+> import pathlib, jaxlib
+> print(pathlib.Path(jaxlib.__file__).parent / 'include')
+> PY
+> )" \
+>   -o build/grid/z1_fixed/libmpx_grid_z1.so \
+>   mpx/grid_codegen/z1_jax_bridge.cu
+> ```
+>
+> Adjust the `-gencode` flag for the local GPU. Generated libraries are local
+> build artifacts under `build/grid/`. To run the Z1 floating example with GRiD dynamics:
+>
+> ```bash
+> micromamba run -n mpx_env python mpx/examples/mjx_z1_floating.py \
+>   --dynamics-backend grid --cost-kinematics-backend grid
+> ```
+>
+> To compare against MJX:
+>
+> ```bash
+> micromamba run -n mpx_env python mpx/examples/mjx_z1_floating.py \
+>   --dynamics-backend mjx --cost-kinematics-backend mjx
+> ```
+
 <p align="center">
   <img src="https://github.com/user-attachments/assets/de8b9650-684e-4f31-82e4-9a0035f50f8e" width="48%" />
   

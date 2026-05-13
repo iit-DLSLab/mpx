@@ -6,6 +6,7 @@ import mujoco
 from mujoco import mjx
 from mujoco.mjx._src.dataclasses import PyTreeNode
 
+from mpx.dynamics import GridDynamicsBackend, MJXDynamicsBackend, robot_spec_from_config
 from mpx.jax_ocp_solvers.jax_ocp_solvers import optimizers
 import mpx.utils.offline_solver as offline_solver
 import mpx.utils.mpc_utils as mpc_utils
@@ -139,12 +140,31 @@ class MPCWrapper:
 
         self.cost = config.cost
         self.hessian_approx = config.hessian_approx
-        self.dynamics = config.dynamics(
+        dynamics_fn = config.dynamics(
             self.model,
             self.mjx_model,
             self.contact_id,
             self.body_id,
         )
+        backend_name = getattr(config, "dynamics_backend", "mjx")
+        if backend_name == "mjx":
+            self.dynamics = MJXDynamicsBackend(dynamics_fn)
+        elif backend_name == "grid":
+            robot_spec = getattr(config, "robot_spec", None)
+            if robot_spec is None:
+                robot_spec = robot_spec_from_config(config, self.model)
+            self.dynamics = GridDynamicsBackend(
+                robot_spec,
+                model=self.model,
+                mjx_model=self.mjx_model,
+                contact_id=self.contact_id,
+                body_id=self.body_id,
+                ffi_library_path=getattr(config, "grid_ffi_library_path", None),
+                ffi_prefix=getattr(config, "grid_ffi_prefix", None),
+                reference_fallback=getattr(config, "grid_reference_fallback", True),
+            )
+        else:
+            raise ValueError(f"Unsupported dynamics_backend: {backend_name}")
 
         # The config owns the nominal state layout, including any extra states.
         self.initial_state = jnp.asarray(config.initial_state)

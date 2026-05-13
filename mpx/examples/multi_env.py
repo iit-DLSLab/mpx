@@ -26,7 +26,9 @@ if gpus:
 jax.config.update("jax_compilation_cache_dir", "./jax_cache")
 
 
-def main(headless=False, n_env=64, episode_length=10.0, n_episodes=10):
+def main(headless=False, n_env=64, episode_length=10.0, n_episodes=10, dynamics_backend=None):
+    if dynamics_backend is not None:
+        config.dynamics_backend = dynamics_backend
     sim_frequency = 500.0
     mpc_frequency = config.mpc_frequency
     robots_per_row = math.ceil(math.sqrt(n_env))
@@ -164,10 +166,12 @@ if __name__ == "__main__":
     parser.add_argument("--n-env", type=int, default=64)
     parser.add_argument("--episode-length", type=float, default=10.0)
     parser.add_argument("--episodes", type=int, default=10)
+    parser.add_argument("--dynamics-backend", choices=("mjx", "grid"), default=None)
     args = parser.parse_args()
     main(
         headless=args.headless,
         n_env=args.n_env,
         episode_length=args.episode_length,
         n_episodes=args.episodes,
+        dynamics_backend=args.dynamics_backend,
     )

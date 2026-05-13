@@ -19,6 +19,13 @@ dependencies = [
     "trajax @ git+https://github.com/google/trajax"
 ]
 
+[project.optional-dependencies]
+grid-codegen = [
+    "beautifulsoup4",
+    "lxml",
+    "sympy",
+]
+
 [project.urls]
 Homepage = "https://github.com/iit-DLSLab/mpx"
 

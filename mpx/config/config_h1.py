@@ -7,6 +7,11 @@ import sys
 from functools import partial
 dir_path = os.path.dirname(os.path.realpath(__file__))
 model_path = os.path.abspath(os.path.join(dir_path, '..')) + '/data/unitree_h1/mjx_h1_walk_real_feet.xml'  # Path to the MuJoCo model XML file
+robot_name = "h1"
+dynamics_backend = "mjx"
+grid_ffi_library_path = None
+grid_ffi_prefix = None
+grid_reference_fallback = True
 # Joint names and related configuration
 
 # Contact frame names and body names for feet (or calves)
