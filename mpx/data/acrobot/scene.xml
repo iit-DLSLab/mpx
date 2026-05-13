@@ -3,7 +3,7 @@
   <option timestep="0.01" gravity="0 0 -9.81"/>
 
   <visual>
-    <global azimuth="135" elevation="-20"/>
+    <global azimuth="135" elevation="-20" offwidth="1920" offheight="1080"/>
     <headlight ambient="0.35 0.35 0.35" diffuse="0.75 0.75 0.75" specular="0.2 0.2 0.2"/>
     <rgba haze="1 1 1 1"/>
   </visual>

@@ -16,7 +16,8 @@ dependencies = [
     "jax[cuda12]",
     "mujoco",
     "mujoco-mjx",
-    "trajax @ git+https://github.com/google/trajax"
+    "trajax @ git+https://github.com/google/trajax",
+    "primal-dual-lipa @ git+https://github.com/joaospinto/primal-dual-lipa"
 ]
 
 [project.urls]

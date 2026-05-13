@@ -7,6 +7,10 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.abspath(os.path.join(dir_path, "..")))
 os.environ.setdefault("XLA_FLAGS", "--xla_gpu_enable_command_buffer=")
 
+if "--video" in sys.argv:
+    os.environ.setdefault("MUJOCO_GL", "egl")
+    os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
+
 import jax
 import jax.numpy as jnp
 import mujoco
@@ -35,7 +39,7 @@ def _build_solve_fn(mpc):
     return solve_mpc
 
 
-def main(steps=500):
+def main(steps=500, video=None, vx=0.0, vy=0.0, wz=0.0, fps=30, headless=False):
     model = mujoco.MjModel.from_xml_path(
         dir_path + "/../data/unitree_h1/mjx_scene_h1_walk.xml"
     )
@@ -44,7 +48,7 @@ def main(steps=500):
     model.opt.timestep = 1 / sim_frequency
 
     mpc = config.MPCWrapper(config, limited_memory=True)
-    command_handle = sim_utils.KeyboardVelocityCommand()
+    command_handle = sim_utils.KeyboardVelocityCommand(vx=vx, vy=vy, wz=wz)
     solve_mpc = _build_solve_fn(mpc)
     reset_mpc = jax.jit(mpc.reset)
 
@@ -100,6 +104,27 @@ def main(steps=500):
         mujoco.mj_step(model, data)
         counter += 1
 
+    if headless or video is not None:
+        recorder = None
+        capture_period = max(1, int(round(sim_frequency / fps)))
+        if video is not None:
+            os.makedirs(os.path.dirname(os.path.abspath(video)) or ".", exist_ok=True)
+            recorder = sim_utils.VideoRecorder(model, video, fps=fps)
+        p_start = np.asarray(data.qpos[:3]).copy()
+        try:
+            for i in range(steps):
+                step_controller()
+                if recorder is not None and i % capture_period == 0:
+                    recorder.capture(data)
+        finally:
+            if recorder is not None:
+                recorder.close()
+                print(f"Wrote video: {video}")
+        p_end = np.asarray(data.qpos[:3])
+        delta = p_end - p_start
+        print(f"Base position: start={p_start} end={p_end} delta={delta}")
+        return
+
     with mujoco.viewer.launch_passive(
         model,
         data,
@@ -117,5 +142,20 @@ def main(steps=500):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--steps", type=int, default=500)
+    parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--video", type=str, default=None,
+                        help="Write an mp4 of the run to this path (forces headless).")
+    parser.add_argument("--vx", type=float, default=0.0)
+    parser.add_argument("--vy", type=float, default=0.0)
+    parser.add_argument("--wz", type=float, default=0.0)
+    parser.add_argument("--fps", type=int, default=30)
     args = parser.parse_args()
-    main(steps=args.steps)
+    main(
+        steps=args.steps,
+        video=args.video,
+        vx=args.vx,
+        vy=args.vy,
+        wz=args.wz,
+        fps=args.fps,
+        headless=args.headless,
+    )

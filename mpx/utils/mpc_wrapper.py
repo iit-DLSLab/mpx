@@ -7,6 +7,7 @@ from mujoco import mjx
 from mujoco.mjx._src.dataclasses import PyTreeNode
 
 from mpx.jax_ocp_solvers.jax_ocp_solvers import optimizers
+from mpx.utils.lipa_solver import build_lipa_solve, run_lipa_offline
 import mpx.utils.offline_solver as offline_solver
 import mpx.utils.mpc_utils as mpc_utils
 
@@ -27,6 +28,41 @@ class MPCData(PyTreeNode):
 
 
 mpx_data = MPCData
+
+def lipa_pick_cost_and_inequalities(config, cost):
+    """Pick the LIPA call configuration based on the config.
+
+    Returns ``(main_cost, inequalities, main_settings, warmup_cost,
+    warmup_settings)``:
+
+    * Off path (no enforce): main = ``cost`` (the soft-penalty cost), no
+      inequalities, settings from ``config.lipa_settings``.
+    * Enforce path: main = ``cost_smooth + inequalities`` with
+      ``config.lipa_settings_enforce or config.lipa_settings``. The warm-start
+      pair (``cost``, ``lipa_settings``) is also returned so the offline path
+      can do a two-phase solve — phase 1 on the inequality-free formulation,
+      phase 2 on the constrained one starting from phase 1's iterate. This
+      sidesteps local-basin pitfalls (notably the multi-shooting quaternion
+      singularity at the apex of the barrel-roll maneuver) without
+      bootstrapping from a different solver.
+
+    Configs opt in by setting ``lipa_enforce_inequalities = True`` and
+    providing both ``cost_smooth`` and ``inequalities``.
+    """
+    enforce = getattr(config, "lipa_enforce_inequalities", False)
+    base_settings = getattr(config, "lipa_settings", None)
+    if not enforce:
+        return cost, None, base_settings, None, None
+    cost_smooth = getattr(config, "cost_smooth", None)
+    inequalities = getattr(config, "inequalities", None)
+    if cost_smooth is None or inequalities is None:
+        raise ValueError(
+            "lipa_enforce_inequalities=True requires both `cost_smooth` and "
+            "`inequalities` to be defined on the config."
+        )
+    enforce_settings = getattr(config, "lipa_settings_enforce", None) or base_settings
+    return cost_smooth, inequalities, enforce_settings, cost, base_settings
+
 
 def build_solver_step(config, cost, dynamics, hessian_approx, limited_memory):
     solver_mode = getattr(config, "solver_mode", "primal_dual")
@@ -52,6 +88,19 @@ def build_solver_step(config, cost, dynamics, hessian_approx, limited_memory):
             X, U, defects = solver(reference, parameter, W, x0, X0, U0)
             return X, U, defects
 
+        return solver_mode, solve
+
+    if solver_mode == "lipa":
+        # Online MPC stays single-phase: per-step warm-start via the data
+        # carry already chains across calls, and a per-step phase-1 would
+        # double the compile + per-step compute. The two-phase flow is
+        # offline-only (see run_lipa_offline / runOffline).
+        lipa_cost, lipa_inequalities, lipa_settings, _, _ = lipa_pick_cost_and_inequalities(
+            config, cost
+        )
+        solve = build_lipa_solve(
+            lipa_cost, dynamics, settings=lipa_settings, inequalities=lipa_inequalities
+        )
         return solver_mode, solve
 
     raise ValueError(f"Unsupported MPC solver_mode: {solver_mode}")
@@ -326,21 +375,49 @@ class MPCWrapper:
         U0 = self.initial_U0
         V0 = self.initial_V0
 
-        X0, U0, _, output, stats = offline_solver.run_offline_solve(
-            self._solve,
-            self.cost,
-            self.dynamics,
-            self.config.solver_mode,
-            reference,
-            parameter,
-            W,
-            x0,
-            X0,
-            U0,
-            V0,
-            max_iter=max_iter,
-            verbose=verbose,
-        )
+        if self.solver_mode == "lipa":
+            # LIPA is a complete NLP solver; one call converges. Looping it
+            # restarts the IPM µ/η each time, which inflates "iterations"
+            # and wall time without improving the solution.
+            (
+                lipa_cost,
+                lipa_inequalities,
+                lipa_settings,
+                lipa_warmup_cost,
+                lipa_warmup_settings,
+            ) = lipa_pick_cost_and_inequalities(self.config, self.cost)
+            X0, U0, _, output, stats = run_lipa_offline(
+                lipa_cost,
+                self.dynamics,
+                reference,
+                parameter,
+                W,
+                x0,
+                X0,
+                U0,
+                V0,
+                settings=lipa_settings,
+                inequalities=lipa_inequalities,
+                warmup_cost=lipa_warmup_cost,
+                warmup_settings=lipa_warmup_settings,
+                verbose=verbose,
+            )
+        else:
+            X0, U0, _, output, stats = offline_solver.run_offline_solve(
+                self._solve,
+                self.cost,
+                self.dynamics,
+                self.config.solver_mode,
+                reference,
+                parameter,
+                W,
+                x0,
+                X0,
+                U0,
+                V0,
+                max_iter=max_iter,
+                verbose=verbose,
+            )
 
         if return_stats:
             return X0, U0, reference, output, stats

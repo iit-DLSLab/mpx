@@ -88,6 +88,7 @@ initial_state = jnp.concatenate(
 )
 
 cost = partial(mpc_objectives.quadruped_wb_obj, False, n_joints, n_contact, N)
+cost_smooth = partial(mpc_objectives.quadruped_wb_smooth_cost, False, n_joints, n_contact, N)
 hessian_approx = None
 
 def dynamics(model, mjx_model, contact_id, body_id):
@@ -106,3 +107,23 @@ solver_mode = "fddp"  # Solver mode for the optimization problem
 # dynamics = mpc_dyn_model.quadruped_wb_dynamics_explicit_contact
 max_torque = 40
 min_torque = -40
+
+inequalities = partial(
+    mpc_objectives.quadruped_wb_inequalities, n_joints, n_contact, 0.5, 50.0, 20.0
+)
+lipa_enforce_inequalities = True
+
+def _lipa_settings():
+    from primal_dual_lipa.types import SolverSettings
+    return SolverSettings(
+        max_iterations=2000,
+        η0=1e9,
+        η_update_factor=1.1,
+        µ_update_factor=0.9,
+        cost_improvement_threshold=1e-3,
+        primal_violation_threshold=1e-5,
+        use_parallel_lqr=False,
+        num_parallel_line_search_steps=1,
+    )
+
+lipa_settings = _lipa_settings()

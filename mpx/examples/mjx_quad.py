@@ -8,6 +8,12 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.abspath(os.path.join(dir_path, "..")))
 os.environ.setdefault("XLA_FLAGS", "--xla_gpu_enable_command_buffer=")
 
+# Headless video recording uses `mujoco.Renderer`, which requires an OpenGL
+# backend to be configured before the first `import mujoco` in the process.
+if "--video" in sys.argv:
+    os.environ.setdefault("MUJOCO_GL", "egl")
+    os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
+
 import jax
 import jax.numpy as jnp
 import mujoco
@@ -37,7 +43,16 @@ def _build_solve_fn(mpc):
     return solve_mpc
 
 
-def main(headless=False, steps=500, scene="flat"):
+def main(
+    headless=False,
+    steps=500,
+    scene="flat",
+    video=None,
+    vx=0.0,
+    vy=0.0,
+    wz=0.0,
+    fps=30,
+):
     model = mujoco.MjModel.from_xml_path(
         dir_path + f"/../data/aliengo/scene_{scene}.xml"
     )
@@ -47,7 +62,9 @@ def main(headless=False, steps=500, scene="flat"):
 
     contact_ids = sim_utils.geom_ids(model, config.contact_frame)
     mpc = mpc_wrapper.MPCWrapper(config, limited_memory=True)
-    command_handle = sim_utils.KeyboardVelocityCommand()
+    # Headless+video: scripted velocity (no keyboard); viewer mode keeps the
+    # interactive arrow-key handle.
+    command_handle = sim_utils.KeyboardVelocityCommand(vx=vx, vy=vy, wz=wz)
     solve_mpc = _build_solve_fn(mpc)
     reset_mpc = jax.jit(mpc.reset)
 
@@ -112,9 +129,25 @@ def main(headless=False, steps=500, scene="flat"):
         mujoco.mj_step(model, data)
         counter += 1
 
-    if headless:
-        for _ in range(steps):
-            step_controller()
+    if headless or video is not None:
+        recorder = None
+        capture_period = max(1, int(round(sim_frequency / fps)))
+        if video is not None:
+            os.makedirs(os.path.dirname(os.path.abspath(video)) or ".", exist_ok=True)
+            recorder = sim_utils.VideoRecorder(model, video, fps=fps)
+        p_start = np.asarray(data.qpos[:3]).copy()
+        try:
+            for i in range(steps):
+                step_controller()
+                if recorder is not None and i % capture_period == 0:
+                    recorder.capture(data)
+        finally:
+            if recorder is not None:
+                recorder.close()
+                print(f"Wrote video: {video}")
+        p_end = np.asarray(data.qpos[:3])
+        delta = p_end - p_start
+        print(f"Base position: start={p_start} end={p_end} delta={delta}")
         return
 
     with mujoco.viewer.launch_passive(
@@ -141,9 +174,22 @@ if __name__ == "__main__":
     parser.add_argument("--steps", type=int, default=500)
     parser.add_argument("--scene", type=str, default="flat")
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--video", type=str, default=None,
+                        help="Write an mp4 of the run to this path (forces headless).")
+    parser.add_argument("--vx", type=float, default=0.0,
+                        help="Forward velocity command (m/s) for headless/video runs.")
+    parser.add_argument("--vy", type=float, default=0.0)
+    parser.add_argument("--wz", type=float, default=0.0,
+                        help="Yaw-rate command (rad/s).")
+    parser.add_argument("--fps", type=int, default=30)
     args = parser.parse_args()
     main(
         headless=args.headless,
         steps=args.steps,
         scene=args.scene,
+        video=args.video,
+        vx=args.vx,
+        vy=args.vy,
+        wz=args.wz,
+        fps=args.fps,
     )

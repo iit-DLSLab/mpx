@@ -228,6 +228,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--steps", type=int, default=500)
-    parser.add_argument("--solver", choices=("primal_dual", "fddp"), default="primal_dual")
+    parser.add_argument("--solver", choices=("primal_dual", "fddp", "lipa"), default="primal_dual")
     args = parser.parse_args()
     main(headless=args.headless, steps=args.steps, solver_mode=args.solver)

@@ -393,3 +393,84 @@ def render_ghost_trajectory(
         )
 
     return ghost_geoms, scratch_data
+
+
+class VideoRecorder:
+    """Offscreen mp4 recorder built around `mujoco.Renderer`.
+
+    Designed for headless execution of the online MPC examples (mjx_quad,
+    mjx_h1, ...). Tracks the robot base by default (lookat = qpos[:3]).
+
+    Requires:
+      * `MUJOCO_GL=egl` (or another working backend) set BEFORE `import mujoco`
+        — see `enable_offscreen_gl_for_video()`.
+      * `imageio[ffmpeg]` for libx264 mp4 output.
+    """
+
+    def __init__(
+        self,
+        model: mujoco.MjModel,
+        path: str,
+        *,
+        fps: int = 30,
+        width: int = 640,
+        height: int = 480,
+        distance: float = 3.0,
+        azimuth: float = 90.0,
+        elevation: float = -20.0,
+        bit_depth: int = 10,
+    ):
+        import imageio  # late import: only needed when recording
+
+        self._renderer = mujoco.Renderer(model, height=height, width=width)
+        
+        # Pick pixel format based on bit depth
+        pix_fmt = "yuv420p10le" if bit_depth == 10 else "yuv420p"
+        
+        self._writer = imageio.get_writer(
+            path,
+            format="FFMPEG",
+            codec="libx264",
+            fps=fps,
+            macro_block_size=1,
+            output_params=["-pix_fmt", pix_fmt],
+        )
+        self._cam = mujoco.MjvCamera()
+        self._cam.distance = float(distance)
+        self._cam.azimuth = float(azimuth)
+        self._cam.elevation = float(elevation)
+        self._cam.lookat[:] = [0.0, 0.0, 0.0]
+
+    def capture(self, data: mujoco.MjData, lookat: np.ndarray | None = None) -> None:
+        """Render and append one frame.
+
+        Default `lookat` is the floating-base world position (`qpos[:3]`) when
+        the model has at least 3 generalised coords — the typical case for
+        legged-robot configs. For low-dimensional models (e.g. acrobot's
+        2-DOF qpos), falls back to the world body's xpos so the camera stays
+        pointed at something sensible instead of crashing on the reshape.
+        """
+
+        if lookat is None:
+            qpos = np.asarray(data.qpos, dtype=np.float64)
+            if qpos.size >= 3:
+                lookat = qpos[:3]
+            else:
+                # Centre on the first non-world body's world position. Always 3D.
+                lookat = np.asarray(data.xpos[1] if data.xpos.shape[0] > 1 else data.xpos[0],
+                                    dtype=np.float64)
+        self._cam.lookat[:] = np.asarray(lookat, dtype=np.float64).reshape(3)
+        self._renderer.update_scene(data, self._cam)
+        self._writer.append_data(self._renderer.render())
+
+    def close(self) -> None:
+        try:
+            self._writer.close()
+        finally:
+            self._renderer.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self.close()

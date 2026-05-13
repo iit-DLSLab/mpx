@@ -74,8 +74,40 @@ def quadruped_srbd_hessian_gn(n_contact,W,reference,x, u, t):
     H_constraint = J_friction_cone(u).T@H_penalty@J_friction_cone(u)
     return J_x(x,u).T@W@J_x(x,u), J_u(x,u).T@W@J_u(x,u) + H_constraint, J_x(x,u).T@W@J_u(x,u)
 
-def quadruped_wb_obj(swing_tracking,n_joints,n_contact,N,W,reference,x, u, t):
-    
+def _quadruped_wb_constraint_slacks(n_joints, n_contact, mu, torque_limit, dq_limit, x, u, friction_eps=1e-2):
+    grf = x[13 + 2 * n_joints + 3 * n_contact:]
+    tau = u[:n_joints]
+    dq = x[13 + n_joints:13 + 2 * n_joints]
+    Fx = grf[0::3]
+    Fy = grf[1::3]
+    Fz = grf[2::3]
+    s_friction = mu * Fz - jnp.sqrt(jnp.square(Fx) + jnp.square(Fy) + jnp.ones(n_contact) * friction_eps)
+    sym = jnp.kron(jnp.eye(n_joints), jnp.array([-1.0, 1.0])).T
+    s_torque = sym @ tau + (torque_limit + 1e-2)
+    s_dq = sym @ dq + (dq_limit + 1e-2)
+    return s_friction, s_torque, s_dq
+
+
+def quadruped_wb_inequalities(
+    n_joints, n_contact, mu, torque_limit, dq_limit, reference, x, u, t, friction_eps=1e-12
+):
+    """LIPA-form inequalities ``g(x,u,t) <= 0`` for the quadruped whole-body problem.
+
+    Friction is gated by the reference contact mask (vacuous in swing); torque and
+    joint-speed limits are always active. At the terminal stage there is no control
+    input, so all entries collapse to zero.
+    """
+    s_friction, s_torque, s_dq = _quadruped_wb_constraint_slacks(
+        n_joints, n_contact, mu, torque_limit, dq_limit, x, u, friction_eps=friction_eps
+    )
+    contact = reference[t, 13 + n_joints + 3 * n_contact:13 + n_joints + 4 * n_contact]
+    g = jnp.concatenate([-contact * s_friction, -s_torque, -s_dq])
+    N = reference.shape[0] - 1
+    return jnp.where(t == N, jnp.zeros_like(g), g)
+
+
+def quadruped_wb_smooth_cost(swing_tracking, n_joints, n_contact, N, W, reference, x, u, t):
+    """Stage cost without any soft-inequality penalties (friction/torque/dq)."""
     p = x[:3]
     quat = x[3:7]
     q = x[7:7+n_joints]
@@ -94,18 +126,6 @@ def quadruped_wb_obj(swing_tracking,n_joints,n_contact,N,W,reference,x, u, t):
     p_leg_ref = reference[t,13+n_joints:13+n_joints+3*n_contact]
     contact = reference[t,13+n_joints+3*n_contact:13+n_joints+4*n_contact]
     grf_ref = reference[t,13+n_joints+4*n_contact:13+n_joints+7*n_contact]
-    mu = 0.5
-    friction_cone = mu*grf[2::3] - jnp.sqrt(jnp.square(grf[1::3]) + jnp.square(grf[::3]) + jnp.ones(n_contact)*1e-2)
-    friction_cone = penalty(friction_cone)
-    torque_limits = jnp.array([
-        44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44,
-        44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44 ])
-    #min grf 
-    # min_force = grf[2::3] - jnp.ones(n_contact)*10
-    torque_limits = jnp.kron(jnp.eye(n_joints),(jnp.array([-1,1]))).T@tau+torque_limits + jnp.ones_like(torque_limits)*1e-2
-
-    joint_speed_limits = jnp.ones(2*n_joints)*10
-    joint_speed_limits = jnp.kron(jnp.eye(n_joints),(jnp.array([-1,1]))).T@dq + joint_speed_limits + jnp.ones_like(joint_speed_limits)*1e-2
 
     if swing_tracking:
         contact_map = jnp.ones(3*n_contact)
@@ -116,13 +136,25 @@ def quadruped_wb_obj(swing_tracking,n_joints,n_contact,N,W,reference,x, u, t):
                  (dp - dp_ref).T @ W[6+n_joints:9+n_joints,6+n_joints:9+n_joints] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9+n_joints:12+n_joints,9+n_joints:12+n_joints] @ (omega - omega_ref) + dq.T @ W[12+n_joints:12+2*n_joints,12+n_joints:12+2*n_joints] @ dq +\
                  (contact_map*(p_leg - p_leg_ref)).T @W[12+2*n_joints:12+2*n_joints+3*n_contact,12+2*n_joints:12+2*n_joints+3*n_contact]@ (contact_map*(p_leg - p_leg_ref))+ \
                  tau.T @ W[12+2*n_joints+3*n_contact:12+3*n_joints+3*n_contact,12+2*n_joints+3*n_contact:12+3*n_joints+3*n_contact] @ tau +\
-                 (grf-grf_ref).T @ W[12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact,12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact] @ (grf-grf_ref) +\
-                 jnp.sum(penalty(torque_limits,1,1)) + jnp.sum(friction_cone*contact) + jnp.sum(penalty(joint_speed_limits,1,1))
+                 (grf-grf_ref).T @ W[12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact,12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact] @ (grf-grf_ref)
     term_cost = (p - p_ref).T @ W[:3,:3] @ (p - p_ref) + math.quat_sub(quat,quat_ref).T@W[3:6,3:6]@math.quat_sub(quat,quat_ref) + (q - q_ref).T @ W[6:6+n_joints,6:6+n_joints] @ (q - q_ref) +\
                  (dp - dp_ref).T @ W[6+n_joints:9+n_joints,6+n_joints:9+n_joints] @ (dp - dp_ref) + (omega - omega_ref).T @ W[9+n_joints:12+n_joints,9+n_joints:12+n_joints] @ (omega - omega_ref) + dq.T @ W[12+n_joints:12+2*n_joints,12+n_joints:12+2*n_joints] @ dq
 
-
     return jnp.where(t == N, 0.5 * term_cost, 0.5 * stage_cost)
+
+
+def quadruped_wb_obj(swing_tracking, n_joints, n_contact, N, W, reference, x, u, t):
+    smooth = quadruped_wb_smooth_cost(swing_tracking, n_joints, n_contact, N, W, reference, x, u, t)
+    s_friction, s_torque, s_dq = _quadruped_wb_constraint_slacks(
+        n_joints, n_contact, 0.5, 44.0, 10.0, x, u
+    )
+    contact = reference[t, 13 + n_joints + 3 * n_contact:13 + n_joints + 4 * n_contact]
+    soft = (
+        jnp.sum(penalty(s_friction) * contact)
+        + jnp.sum(penalty(s_torque, 1, 1))
+        + jnp.sum(penalty(s_dq, 1, 1))
+    )
+    return smooth + jnp.where(t == N, 0.0, 0.5 * soft)
 
 def quadruped_wb_hessian_gn(swing_tracking,n_joints,n_contact,W,reference,x, u, t):
 
@@ -323,7 +355,43 @@ def h1_wb_hessian_gn(n_joints,n_contact,W,reference,x, u, t):
     return J_x(x,u).T@W@J_x(x,u), J_u(x,u).T@W@J_u(x,u), J_x(x,u).T@W@J_u(x,u)
 
 
-def h1_kinodynamic_obj(n_joints, n_contact, N, W, reference, x, u, t):
+def _h1_kinodynamic_friction_slack(n_joints, n_contact, mu, u, friction_eps=1e-1):
+    grf = u[n_joints:]
+    Fx = grf[0::3]
+    Fy = grf[1::3]
+    Fz = grf[2::3]
+    return mu * Fz - jnp.sqrt(jnp.square(Fx) + jnp.square(Fy) + jnp.ones(n_contact) * friction_eps)
+
+
+def h1_kinodynamic_inequalities(n_joints, n_contact, mu, reference, x, u, t, friction_eps=1e-12):
+    """LIPA-form ``g <= 0`` inequalities for the H1 kinodynamic problem.
+
+    Two physical constraints, both gated by the reference contact mask
+    (vacuous during swing):
+
+    * ``Fz >= 0`` — a foot can only push into the ground, not pull. Without
+      this, the soft-penalty optimizer happily uses negative Fz to "anchor"
+      the foot, which produces unphysical jump take-offs and breaks the
+      Coulomb-cone interpretation: with Fz < 0 and `g = mu*Fz - sqrt(Fx²+Fy²)`
+      the cone becomes infeasible by `≈ |mu*Fz|` regardless of (Fx, Fy).
+    * Friction cone: ``sqrt(Fx² + Fy²) <= mu * Fz``.
+
+    Other limits (joint-velocity, torque) live elsewhere and are not enforced
+    as constraints in this solver.
+    """
+    grf = u[n_joints:]
+    Fz = grf[2::3]
+    s_friction = _h1_kinodynamic_friction_slack(n_joints, n_contact, mu, u, friction_eps=friction_eps)
+    contact = reference[t, 13 + n_joints + 3 * n_contact:13 + n_joints + 4 * n_contact]
+    g_friction = -contact * s_friction
+    g_fz = -contact * Fz
+    g = jnp.concatenate([g_friction, g_fz])
+    N = reference.shape[0] - 1
+    return jnp.where(t == N, jnp.zeros_like(g), g)
+
+
+def h1_kinodynamic_smooth_cost(n_joints, n_contact, N, W, reference, x, u, t):
+    """H1 kinodynamic stage cost with the friction soft-penalty stripped out."""
 
     p = x[:3]
     quat = x[3:7]
@@ -342,13 +410,7 @@ def h1_kinodynamic_obj(n_joints, n_contact, N, W, reference, x, u, t):
     dp_ref = reference[t,7+n_joints:10+n_joints]
     omega_ref = reference[t,10+n_joints:13+n_joints]
     p_leg_ref = reference[t,13+n_joints:13+n_joints+3*n_contact]
-    contact = reference[t,13+n_joints+3*n_contact:13+n_joints+4*n_contact]
     grf_ref = reference[t,13+n_joints+4*n_contact:13+n_joints+7*n_contact]
-
-    mu = 0.7
-    friction_cone = mu * grf[2::3] - jnp.sqrt(
-        jnp.square(grf[1::3]) + jnp.square(grf[::3]) + jnp.ones(n_contact) * 1e-1
-    )
 
     stage_cost = (
         (p - p_ref).T @ W[:3,:3] @ (p - p_ref)
@@ -366,7 +428,6 @@ def h1_kinodynamic_obj(n_joints, n_contact, N, W, reference, x, u, t):
         + (grf - grf_ref).T
         @ W[12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact,12+3*n_joints+3*n_contact:12+3*n_joints+6*n_contact]
         @ (grf - grf_ref)
-        + jnp.sum(penalty(friction_cone) * contact)
     )
     term_cost = (
         (p - p_ref).T @ W[:3,:3] @ (p - p_ref)
@@ -378,6 +439,14 @@ def h1_kinodynamic_obj(n_joints, n_contact, N, W, reference, x, u, t):
     )
 
     return jnp.where(t == N, 0.5 * term_cost, 0.5 * stage_cost)
+
+
+def h1_kinodynamic_obj(n_joints, n_contact, N, W, reference, x, u, t):
+    smooth = h1_kinodynamic_smooth_cost(n_joints, n_contact, N, W, reference, x, u, t)
+    s_friction = _h1_kinodynamic_friction_slack(n_joints, n_contact, 0.7, u)
+    contact = reference[t, 13 + n_joints + 3 * n_contact:13 + n_joints + 4 * n_contact]
+    soft = jnp.sum(penalty(s_friction) * contact)
+    return smooth + jnp.where(t == N, 0.0, 0.5 * soft)
 
 def talos_wb_obj(n_joints,n_contact,N,W,reference,x, u, t):
 
