@@ -3,6 +3,8 @@ from jax import numpy as jnp
 from mujoco import mjx
 from mujoco.mjx._src import math
 
+from mpx.utils.sim import geom_ids
+
 
 def _mask_contact_forces(grf, contact):
     return (grf.reshape(-1, 3) * contact[:, None]).reshape(-1)
@@ -110,7 +112,11 @@ def quadruped_wb_dynamics(model, mjx_model, contact_id, body_id, n_joints, dt, x
     # Concatenate the Jacobians into a single matrix
     J = jnp.concatenate([J_FL, J_FR, J_RL, J_RR], axis=1)
     # Concatenate the positions of the legs into a single vector
-    current_leg = jnp.concatenate([FL_leg, FR_leg, RL_leg, RR_leg], axis=0)
+    
+    if len(contact_id) > 4 :
+        current_leg = jnp.asarray([mjx_data.geom_xpos[int(geom_id)] for geom_id  in contact_id]).flatten()
+    else:
+        current_leg = jnp.concatenate([FL_leg, FR_leg, RL_leg, RR_leg], axis=0)
     alpha = 25
     # Compute the velocity-level constraint violation
     g_dot = J.T @ x[n_joints+7:13+2*n_joints]

@@ -35,8 +35,8 @@ def terrain_orientation(liftoff_pos,Ryaw):
 
     return jnp.roll(quat,1)
 
-@partial(jax.jit, static_argnums=(0,1,2,3,4,5))
-def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff,contact,clearence_speed):
+@partial(jax.jit, static_argnums=(0,1,2,3,4,5), static_argnames=("extra_ref_fun",))
+def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0,q0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff,contact,clearence_speed,current_time,extra_ref_fun=None):
     p = x[:3]
     quat = x[3:7]
     # q = x[7:7+n_joints]
@@ -84,7 +84,6 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0
 
         contact_sequence = contact_sequence.at[t,:].set(new_contact_sequence)
         timer_seq = timer_seq.at[t,:].set(new_t)
-
         liftoff_x = jnp.where(jnp.logical_and(jnp.logical_not(contact_sequence[t,:]),contact_sequence[t-1,:]),new_foot_x,liftoff_x)
         liftoff_y = jnp.where(jnp.logical_and(jnp.logical_not(contact_sequence[t,:]),contact_sequence[t-1,:]),new_foot_y,liftoff_y)
         liftoff_z = jnp.where(jnp.logical_and(jnp.logical_not(contact_sequence[t,:]),contact_sequence[t-1,:]),new_foot_z,liftoff_z)
@@ -141,7 +140,11 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0
     liftoff = liftoff.at[1::3].set(liftoff_y)
     liftoff = liftoff.at[2::3].set(liftoff_z)
 
-    return jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref, foot_ref, contact_sequence,grf_ref], axis=1),jnp.concatenate([contact_sequence], axis=1), liftoff
+    ref = {"p": p_ref, "quat": quat_ref, "q": q_ref, "dp": dp_ref, "omega": omega_ref, "foot": foot_ref, "contact": contact_sequence, "grf": grf_ref}
+    if extra_ref_fun is not None:
+        ref = extra_ref_fun(ref, current_time)
+
+    return ref, jnp.concatenate([contact_sequence], axis=1), liftoff
 
 @partial(jax.jit, static_argnums=(0,1,2,3))
 def reference_generator_srbd(use_terrain_estimator,N,dt,n_contact,mass,foot0,t_timer, x, foot, input, duty_factor, step_freq,step_height,liftoff,contact,clearence_speed):
@@ -193,7 +196,7 @@ def reference_generator_srbd(use_terrain_estimator,N,dt,n_contact,mass,foot0,t_t
         liftoff_z = jnp.where(jnp.logical_and(jnp.logical_not(contact_sequence[t,:]),contact_sequence[t-1,:]),new_foot_z,liftoff_z)
 
         def calc_foothold(direction):
-            f1 = 0.5*ref_lin_vel[direction]*duty_factor/step_freq
+            f1 = 0.5*dp[direction]*duty_factor/step_freq
             f2 = jnp.sqrt(input[6]/9.81)*(dp[direction]-ref_lin_vel[direction])
             f = f1 + f2 + foot0_projected[direction::3]
             return f
@@ -267,7 +270,8 @@ def reference_generator_srbd(use_terrain_estimator,N,dt,n_contact,mass,foot0,t_t
     liftoff = liftoff.at[1::3].set(liftoff_y)
     liftoff = liftoff.at[2::3].set(liftoff_z)
 
-    return jnp.concatenate([p_ref, quat_ref, dp_ref, omega_ref,contact_sequence], axis=1),jnp.concatenate([ contact_sequence,foot_ref], axis=1), liftoff , foot_ref_dot
+    ref = {"p": p_ref, "quat": quat_ref, "dp": dp_ref, "omega": omega_ref, "contact": contact_sequence}
+    return ref,jnp.concatenate([ contact_sequence,foot_ref], axis=1), liftoff , foot_ref_dot
 
 import mujoco
 from mujoco import mjx
@@ -396,7 +400,8 @@ def reference_barell_roll(N,dt,n_joints,n_contact,foot0,q0):
 
     grf_ref = jnp.zeros((N, 3*n_contact))
 
-    return jnp.concatenate([p_ref, quat_ref, q_ref, dp_ref, omega_ref, foot_ref, contact_sequence, grf_ref], axis=1), jnp.concatenate([contact_sequence, foot_ref], axis=1)
+    ref = {"p": p_ref, "quat": quat_ref, "q": q_ref, "dp": dp_ref, "omega": omega_ref, "foot": foot_ref, "contact": contact_sequence, "grf": grf_ref}
+    return ref, jnp.concatenate([contact_sequence, foot_ref], axis=1)
 
 
 def reference_humanoid_jump_forward(
@@ -471,10 +476,7 @@ def reference_humanoid_jump_forward(
 
     grf_ref = jnp.zeros((N, 3 * n_contact))
 
-    reference = jnp.concatenate(
-        [p_ref, quat_ref, q_ref, dp_ref, omega_ref, foot_ref, contact_sequence, grf_ref],
-        axis=1,
-    )
+    reference = {"p": p_ref, "quat": quat_ref, "q": q_ref, "dp": dp_ref, "omega": omega_ref, "foot": foot_ref, "contact": contact_sequence, "grf": grf_ref}
     parameter = jnp.concatenate([contact_sequence, foot_ref], axis=1)
     return reference, parameter
 
@@ -540,9 +542,6 @@ def reference_quadruped_trot_two_step(
         contact_sequence = contact_sequence.at[start_idx:].set(jnp.tile(jnp.ones(n_contact), (N - start_idx, 1)))
 
     grf_ref = jnp.zeros((N, 3 * n_contact))
-    reference = jnp.concatenate(
-        [p_ref, quat_ref, q_ref, dp_ref, omega_ref, foot_ref, contact_sequence, grf_ref],
-        axis=1,
-    )
+    reference = {"p": p_ref, "quat": quat_ref, "q": q_ref, "dp": dp_ref, "omega": omega_ref, "foot": foot_ref, "contact": contact_sequence, "grf": grf_ref}
     parameter = jnp.concatenate([contact_sequence, foot_ref], axis=1)
     return reference, parameter

@@ -25,6 +25,7 @@ step_freq = 1.35   # Step frequency in Hz
 step_height = 0.12 # Step height in meters
 initial_height = 0.1  # Initial height of the robot's base in meters
 robot_height = 0.33  # Height of the robot's base in meters
+clearance_speed = 0.2
 grf_as_state = True
 
 # Initial positions, orientations, and joint angles
@@ -57,6 +58,8 @@ n_contact = len(contact_frame)  # Number of contact points
 n =  13 + 2*n_joints + 6*n_contact  # Number of states (theta1, theta1_dot, theta2, theta2_dot)
 m = n_joints  # Number of controls (F)
 grf_as_state = True
+foot_slice = slice(13 + 2 * n_joints, 13 + 2 * n_joints + 3 * n_contact)
+leg_slice = foot_slice
 # Reference torques and controls (using n_joints)
 tau_ref = jnp.zeros(n_joints)  # Reference torques (all zeros)
 # tau_ref = jnp.array([7.2171830e-02, -2.1473727e+00,  5.8485503e+00,  2.6923120e-03,
@@ -77,8 +80,7 @@ Q_grf = jnp.diag(jnp.ones(3*n_contact)) * 0  # Cost matrix for ground reaction f
 # For the leg contact cost, repeat the unit cost for each contact point.
 Qleg = jnp.diag(jnp.tile(jnp.array([1e3,1e3,5e4]),n_contact))
 
-# Combine all cost matrices into a block diagonal matrix
-W = jax.scipy.linalg.block_diag(Qp, Qrot, Qq, Qdp, Qomega, Qdq, Qleg, Qtau,Q_grf)
+W = {"pos": Qp, "rot": Qrot, "q": Qq, "vel": Qdp, "omega": Qomega, "dq": Qdq, "contact": Qleg, "tau": Qtau, "grf": Q_grf}
 
 use_terrain_estimation = True  # Flag to use terrain estimation
 
@@ -87,8 +89,19 @@ initial_state = jnp.concatenate(
     [p0, quat0, q0, jnp.zeros(6 + n_joints), p_legs0, jnp.zeros(_state_extra)]
 )
 
-cost = partial(mpc_objectives.quadruped_wb_obj, False, n_joints, n_contact, N)
+cost = partial(mpc_objectives.quadruped_wb_obj, False, n_joints, n_contact, n_contact, N)
 hessian_approx = None
+reference_generator = partial(
+    mpc_utils.reference_generator,
+    use_terrain_estimation,
+    N,
+    dt,
+    n_joints,
+    n_contact,
+    foot0=p_legs0,
+    q0=q0,
+    clearence_speed=clearance_speed,
+)
 
 def dynamics(model, mjx_model, contact_id, body_id):
     return partial(

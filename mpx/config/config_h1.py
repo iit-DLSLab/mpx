@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 import jax 
 import mpx.utils.models as mpc_dyn_model
+import mpx.utils.mpc_utils as mpc_utils
 import mpx.utils.objectives as mpc_objectives
 import os 
 import sys 
@@ -25,6 +26,7 @@ step_freq = 1.2   # Step frequency in Hz
 step_height = 0.08 # Step height in meters
 initial_height = 0.9 # Initial height of the robot's base in meters
 robot_height = 0.9  # Height of the robot's base in meters
+clearance_speed = 0.2
 
 # Initial positions, orientations, and joint angles
 p0 = jnp.array([0, 0, 0.9])  # Initial position of the robot's base
@@ -48,6 +50,8 @@ n_contact = len(contact_frame)  # Number of contact points
 n =  13 + 2*n_joints + 3*n_contact + 3*n_contact # Number of states
 m = n_joints # Number of controls (F)
 grf_as_state = True
+foot_slice = slice(13 + 2 * n_joints, 13 + 2 * n_joints + 3 * n_contact)
+leg_slice = foot_slice
 # Reference torques and controls (using n_joints)
 u_ref = jnp.zeros(m)  # Reference controls (concatenated torques)
 
@@ -71,8 +75,7 @@ Qtau  = jnp.diag(jnp.ones(n_joints)) * 1e-3  # Cost matrix for torques
 Qleg = jnp.diag(jnp.tile(jnp.array([1e3,1e3,1e5]),n_contact))
 Qgrf = jnp.diag(jnp.ones(3*n_contact))*1e-3
 
-# Combine all cost matrices into a block diagonal matrix
-W = jax.scipy.linalg.block_diag(Qp, Qrot, Qq, Qdp, Qomega, Qdq, Qleg, Qtau, Qgrf)
+W = {"pos": Qp, "rot": Qrot, "q": Qq, "vel": Qdp, "omega": Qomega, "dq": Qdq, "contact": Qleg, "tau": Qtau, "grf": Qgrf}
 
 use_terrain_estimation = False  # Flag to use terrain estimation
 
@@ -83,6 +86,17 @@ initial_state = jnp.concatenate(
 
 cost = partial(mpc_objectives.h1_wb_obj, n_joints, n_contact, N)
 hessian_approx = None
+reference_generator = partial(
+    mpc_utils.reference_generator,
+    use_terrain_estimation,
+    N,
+    dt,
+    n_joints,
+    n_contact,
+    foot0=p_legs0,
+    q0=q0,
+    clearence_speed=clearance_speed,
+)
 
 def dynamics(model, mjx_model, contact_id, body_id):
     return partial(

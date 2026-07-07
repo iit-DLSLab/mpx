@@ -118,7 +118,7 @@ class BatchedMPCControllerWrapper:
         X, U, V = self._solve(
             reference,
             parameter,
-            jnp.tile(self.config.W, (self.n_env, 1, 1)),
+            jax.tree_util.tree_map(lambda w: jnp.tile(w, (self.n_env, 1, 1)), self.config.W),
             x0,
             self.batch_X0,
             self.batch_U0,
