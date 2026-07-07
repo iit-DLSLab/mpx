@@ -1,0 +1,141 @@
+<mujoco model="piper_l_description">
+  <compiler angle="radian"/>
+
+  <default>
+    <default class="collision">
+        <geom group="3"/>
+    </default>
+
+    <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+    </default>
+  </default>
+
+  <asset>
+    <mesh name="base_link" file="assets/base_link.STL"/>
+    <mesh name="link1" file="assets/link1.STL"/>
+    <mesh name="link2" file="assets/link2.STL"/>
+    <mesh name="link3" file="assets/link3.STL"/>
+    <mesh name="link4" file="assets/link4.STL"/>
+    <mesh name="link5" file="assets/link5.STL"/>
+    <mesh name="link7" file="assets/link7.STL"/>
+    <mesh name="link8" file="assets/link8.STL"/>
+    <mesh name="gripper_base_100_v3" file="assets/gripper_base_100_v3.STL"/>
+    <mesh name="realsense_mid_stand_v2" content_type="model/stl" file="assets/realsense_mid_stand_v2.STL"/>
+  </asset>
+
+  <worldbody>
+    <geom type="mesh" rgba="1 1 1 1" mesh="base_link" class="visual"/>
+
+    <body name="link1" pos="0 0 0.123">
+      <inertial pos="0.00201 -0.0022 -0.02127" quat="0.721009 0.591428 -0.23148 0.277084" mass="0.11" diaginertia="0.000114473 0.000110765 7.12023e-05"/>
+      <joint name="joint1" pos="0 0 0" axis="0 0 1" range="-2.618 2.618" damping="0.1" armature="0.01" frictionloss="0.1"/>
+      
+      <geom type="mesh" rgba="1 1 1 1" mesh="link1" class="visual"/>
+      <!--geom size="0.04 0.015" pos="0 0.0 -0.05" quat="1 0 0 1" type="capsule" class="collision"/-->
+      
+      <body name="link2" quat="-0.0616195 0.0616141 0.704419 0.704416">
+        <inertial pos="0.25986 -0.00913 0.00237" quat="0.33951 0.630002 0.324014 0.618745" mass="1.16" diaginertia="0.0163176 0.0162777 0.000957388"/>
+        <joint name="joint2" pos="0 0 0" axis="0 0 1" range="0 3.14" damping="0.1" armature="0.01" frictionloss="0.1"/>
+        
+        <geom type="mesh" rgba="1 1 1 1" mesh="link2" class="visual"/>
+        <geom size="0.04 0.02" pos="0 0.0 0.0" quat="1 0 0 1" type="capsule" class="collision"/>
+        <geom size="0.03 0.10" pos="0.15 -0.025 0.0" quat="1 0 1 -0.15" type="capsule" class="collision"/>
+        
+        <body name="link3" pos="0.33823 0 0" quat="0.608799 0 0 -0.793324">
+          <inertial pos="-0.00726 -0.19029 -0.00045" quat="0.709181 0.703284 -0.0204559 0.0451178" mass="0.59" diaginertia="0.00558951 0.00554224 0.000258829"/>
+          <joint name="joint3" pos="0 0 0" axis="0 0 1" range="-2.697 0" damping="0.1" armature="0.01" frictionloss="0.1"/>
+          
+          <geom type="mesh" rgba="1 1 1 1" mesh="link3" class="visual"/>
+          <geom size="0.04 0.02" pos="0 0.0 0.0" quat="1 0 0 1" type="capsule" class="collision"/>
+          <geom size="0.025 0.08" pos="-0.01 -0.17 0.0" quat="1 1 0 0.05" type="capsule" class="collision"/>
+          
+          <body name="link4" pos="0 -0.3215 0" quat="0.707105 0.707108 0 0">
+            <inertial pos="0.00054 -0.00162 -0.00399" quat="0.859761 0.0861299 -0.104595 0.492395" mass="0.37" diaginertia="0.000174523 0.000169749 0.000142038"/>
+            <joint name="joint4" pos="0 0 0" axis="0 0 1" range="-1.832 1.832" damping="0.1" armature="0.01" frictionloss="0.1"/>
+            
+            <geom type="mesh" rgba="1 1 1 1" mesh="link4" class="visual"/>
+            <geom size="0.03 0.015" pos="0 0.0 0.0" quat="1 1 0 0" type="capsule" class="collision"/>
+            
+            <body name="link5" quat="0.707105 -0.707108 0 0">
+              <inertial pos="0.0002 -0.06142 -0.00257" quat="0.609413 0.425035 -0.377108 0.552947" mass="0.38" diaginertia="0.000302439 0.000295278 0.000150843"/>
+              <joint name="joint5" pos="0 0 0" axis="0 0 -1" range="-1.22 1.22" damping="0.1" armature="0.01" frictionloss="0.1"/>
+              
+              <geom type="mesh" rgba="1 1 1 1" mesh="link5" class="visual"/>
+              <geom size="0.03 0.025" pos="0 -0.08 0.0" quat="1 1 0 0" type="capsule" class="collision"/>
+              
+              <body name="link6" pos="0 -0.091 0" quat="0.707105 0.707108 0 0">
+                <inertial pos="-0.0418018 0 0.0408739" quat="1 0 0 0" mass="0.0776323" diaginertia="0.000195998 9.16013e-05 0.00024367"/>
+                <joint name="joint6" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" damping="0.1" armature="0.01" frictionloss="0.1"/>
+                <geom pos="0.008 -0.002 0.064" quat="0.500398 -0.5 -0.499602 0.5" type="mesh" rgba="1 1 1 1" mesh="gripper_base_100_v3" class="visual"/>
+                <geom size="0.082 0.01 0.01" pos="0.0 -0.0 0.06" quat="0.500398 -0.5 -0.499602 0.5" type="box" class="collision"/>
+                
+                <geom pos="-0.034 -0.002 0.023" quat="0.000563312 -0.706825 0.707388 0.000562864" type="mesh" mesh="realsense_mid_stand_v2" class="visual"/>
+                <geom size="0.012525 0.045 0.0125" pos="-0.0740961 -0.03 0.03725" quat="0.819648 0 -0.572867 0" type="box" class="visual"/>
+                <geom size="0.017 0.045 0.0125" pos="-0.0760961 -0.03 0.032" quat="0.819648 0 -0.572867 0" type="box" class="collision"/>
+                
+                <!-- <geom size="0.01 0.03  0.002" pos="0.0 -0.003 0.11" quat="0.707105 0.707108 0 0" type="box" class="collision"/> -->
+                <geom name="end_effector" size="0.02" pos="0.0 0.0 0.1" quat="1 0 0 0" type="sphere"/>
+
+                <!-- <body name="link7" pos="0 0 0.13503" quat="0.707105 0.707108 0 0">
+                  <inertial pos="0.000277817 -0.0467674 -0.0092103" quat="0.553273 0.439968 -0.46134 0.536174" mass="0.0264822" diaginertia="1.45133e-05 1.0004e-05 5.87021e-06"/>
+                  <joint name="joint7" pos="0 0 0" axis="0 0 -1" type="slide" range="0 0.05" damping="2" armature="0.01" frictionloss="0.1"/>
+                  <geom type="mesh" rgba="0.7 0.7 0.7 1" mesh="link7" class="visual"/>
+                  <geom name = "gripper_1" size="0.01 0.03  0.002" pos="0.0 -0.025 -0.003" quat="1 0 0 0" type="box" class="collision"/>
+                  
+                   
+                </body>
+                <body name="link8" pos="0 0 0.13503" quat="0.707105 -0.707108 0 0">
+                  <inertial pos="0.000277817 0.0467674 -0.0092103" quat="0.553273 0.439968 -0.46134 0.536174" mass="0.0264822" diaginertia="1.45133e-05 1.0004e-05 5.87021e-06"/>
+                  <joint name="joint8" pos="0 0 0" axis="0 0 1" type="slide" range="-0.05 0" damping="2" armature="0.01" frictionloss="0.1"/>
+                  <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="link8" class="visual"/>
+                  <geom name = "gripper_2" size="0.01 0.03  0.002" pos="0.0 0.025 -0.003" quat="1 0 0 0" type="box" class="collision"/>
+                </body> -->
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <!-- <equality>
+    <joint joint1="joint8" joint2="joint7" polycoef="0 -1 0 0 0"/>
+  </equality> -->
+
+  <sensor>
+      <jointpos name="joint1_pos" joint="joint1"/>
+      <jointpos name="joint2_pos" joint="joint2"/>
+      <jointpos name="joint3_pos" joint="joint3"/>
+      <jointpos name="joint4_pos" joint="joint4"/>
+      <jointpos name="joint5_pos" joint="joint5"/>
+      <jointpos name="joint6_pos" joint="joint6"/>
+      <!-- <jointpos name="gripper_pos" joint="joint7"/> -->
+      <!--jointpos name="joint8_pos" joint="joint8"/-->
+  </sensor>
+
+  <actuator>
+      <motor name="joint1" ctrlrange="-32 32" joint="joint1"/>
+      <motor name="joint2" ctrlrange="-32 32" joint="joint2"/>
+      <motor name="joint3" ctrlrange="-32 32" joint="joint3"/>
+      <motor name="joint4" ctrlrange="-8 8" joint="joint4"/>
+      <motor name="joint5" ctrlrange="-8 8" joint="joint5"/>
+      <motor name="joint6" ctrlrange="-8 8" joint="joint6"/>
+      <!-- <position name="joint1" ctrlrange="-3.14159 3.14159" kp="40" kv="5" joint="joint1" forcerange="-20 20"/>
+      <position name="joint2" ctrlrange="-3.14159 3.14159" kp="40" kv="5" joint="joint2" forcerange="-20 20"/>
+      <position name="joint3" ctrlrange="-3.14159 3.14159" kp="40" kv="5" joint="joint3" forcerange="-20 20"/>
+      <position name="joint4" ctrlrange="-3.14159 3.14159" kp="40" kv="5" joint="joint4" forcerange="-20 20"/>
+      <position name="joint5" ctrlrange="-3.14159 3.14159" kp="40" kv="5" joint="joint5" forcerange="-20 20"/>
+      <position name="joint6" ctrlrange="-3.14159 3.14159" kp="40" kv="5" joint="joint6" forcerange="-20 20"/> -->
+      <!-- <motor name="gripper" ctrlrange="-0.5 0.5" joint="joint7"/> -->
+      <!--motor name="joint8" ctrlrange="-5 5" joint="joint8"/-->
+      <!--position name="gripper" joint="joint7" kp="40" kv="5" forcerange="-0.5 0.5"/-->
+  </actuator>
+
+  <keyframe>
+    <key name="home" qpos="0 0. -0. -0. 0 0" ctrl="0 0. -0. -0. 0 0"/>
+    <!-- <key name="sys_id_1" qpos="0.2 0.2 -0.5 0.2 0.2 0.2 0.0" ctrl="0 0. 0. 0. 0 0 0"/>
+    <key name="sys_id_2" qpos="0.9 0.9 -1.0 0.9 0.9 0.9 0.05" ctrl="0 0. 0. 0. 0 0 0"/> -->
+  </keyframe>
+
+</mujoco>
