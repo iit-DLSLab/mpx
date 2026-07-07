@@ -20,6 +20,7 @@ step_freq = base.step_freq
 step_height = base.step_height
 initial_height = base.initial_height
 robot_height = base.robot_height
+clearance_speed = base.clearance_speed
 
 p0 = base.p0
 quat0 = base.quat0
@@ -31,6 +32,8 @@ n_contact = base.n_contact
 n = base.n
 m = base.m
 grf_as_state = base.grf_as_state
+foot_slice = base.foot_slice
+leg_slice = base.leg_slice
 u_ref = base.u_ref
 W = base.W
 use_terrain_estimation = False
@@ -44,6 +47,17 @@ cost = partial(mpc_objectives.h1_kinodynamic_obj, n_joints, n_contact, N)
 hessian_approx = base.hessian_approx
 dynamics = base.dynamics
 MPCWrapper = base.MPCWrapper
+reference_generator = partial(
+    mpc_utils.reference_generator,
+    use_terrain_estimation,
+    N,
+    dt,
+    n_joints,
+    n_contact,
+    foot0=p_legs0,
+    q0=q0,
+    clearence_speed=clearance_speed,
+)
 
 reference = partial(
     mpc_utils.reference_humanoid_jump_forward,

@@ -25,7 +25,7 @@ I1 = m1 * l1 * l1 / 12.0
 I2 = m2 * l2 * l2 / 12.0
 
 parameter = jnp.zeros(N + 1)
-reference = jnp.zeros(N + 1)
+reference = {"dummy": jnp.zeros(N + 1)}
 
 
 def dynamics(x, u, t, parameter):
@@ -70,7 +70,7 @@ u_ref = jnp.array([0.0])
 Q = jnp.diag(jnp.array([1e-5 / dt, 1e-5 / dt, 1e-5 / dt, 1e-5 / dt]))
 R = jnp.diag(jnp.array([1e-4 / dt]))
 Q_f = jnp.diag(jnp.array([10.0, 10.0, 100.0, 100.0]))
-W = jnp.zeros((N, 1))
+W = {"dummy": jnp.zeros((N, 1))}
 
 
 def cost(W, reference, x, u, t):
