@@ -162,6 +162,7 @@
                       <joint name="arm_f1x" axis="0 1 0" range="-1.57 0"/>
                       <geom mesh="arm_link_fngr_0" material="wrap" class="visual"/>
                       <geom mesh="arm_link_fngr_1" material="BlackAbs" class="visual"/>
+                      <geom name = "arm" type="sphere" size="0.036" pos="0 0 0.0"/>
                       <!-- <geom class="collision" mesh="left_hinge_coll"/>
                       <geom class="collision" mesh="left_finger_coll"/>
                       <geom class="collision" mesh="left_tooth_coll"/>
