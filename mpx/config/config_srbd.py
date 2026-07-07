@@ -86,5 +86,4 @@ Qgrf = jnp.diag(jnp.ones(3*n_contact)) * 1e-2  # Cost matrix for
 # Qleg_z = jnp.tile(jnp.array([1e5]),n_contact)  # Unit cost for leg contact
 # Qleg  = jnp.diag(jnp.concatenate([Qleg_x,Qleg_y,Qleg_z]))  # Cost matrix for leg contacts
 
-# Combine all cost matrices into a block diagonal matrix
-W = jax.scipy.linalg.block_diag(Qp, Qrot, Qdp, Qomega,Qgrf)
+W = {"pos": Qp, "rot": Qrot, "vel": Qdp, "omega": Qomega, "grf": Qgrf}

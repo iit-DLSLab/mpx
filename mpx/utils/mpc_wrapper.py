@@ -15,6 +15,7 @@ class MPCData(PyTreeNode):
     """Carry state for the pure functional MPC API."""
 
     dt: float
+    time: jnp.ndarray
     duty_factor: float
     step_freq: float
     step_height: float
@@ -23,7 +24,7 @@ class MPCData(PyTreeNode):
     X0: jnp.ndarray
     U0: jnp.ndarray
     V0: jnp.ndarray
-    W: jnp.ndarray
+    W: object
 
 
 mpx_data = MPCData
@@ -112,10 +113,7 @@ class MPCWrapper:
         self.default_contact = jnp.zeros(config.n_contact)
         self.qpos_slice = slice(0, 7 + config.n_joints)
         self.qvel_slice = slice(self.qpos_slice.stop, self.qpos_slice.stop + 6 + config.n_joints)
-        self.foot_slice = slice(
-            self.qvel_slice.stop,
-            self.qvel_slice.stop + 3 * config.n_contact,
-        )
+        self.foot_slice = config.foot_slice
 
         self.model = mujoco.MjModel.from_xml_path(config.model_path)
         data = mujoco.MjData(self.model)
@@ -163,22 +161,7 @@ class MPCWrapper:
         )
         self._solve = jax.jit(solve)
 
-        reference_generator = getattr(config, "reference_generator", mpc_utils.reference_generator)
-        clearance_speed = getattr(config, "clearance_speed", getattr(config, "clearence_speed", 0.2))
-        self._ref_gen = jax.jit(
-            partial(
-                reference_generator,
-                config.use_terrain_estimation,
-                config.N,
-                config.dt,
-                config.n_joints,
-                config.n_contact,
-                robot_mass,
-                foot0=config.p_legs0,
-                q0=config.q0,
-                clearence_speed=clearance_speed,
-            )
-        )
+        self._ref_gen = partial(config.reference_generator,mass=robot_mass)
         self._timer_run = jax.jit(mpc_utils.timer_run)
         self._update_warm_start = partial(
             _update_warm_start,
@@ -193,6 +176,7 @@ class MPCWrapper:
 
         return MPCData(
             dt=self.config.dt,
+            time=jnp.asarray(0.0, dtype=jnp.float32),
             duty_factor=self.config.duty_factor,
             step_freq=self.config.step_freq,
             step_height=self.config.step_height,
@@ -209,6 +193,12 @@ class MPCWrapper:
         return U[0, : self.config.n_joints]
 
     def _run_impl(self, data, x0, input, contact):
+
+        current_time = data.time + jnp.asarray(
+            1 / self.mpc_frequency,
+            dtype=data.time.dtype,
+        )
+
         _, contact_time = self._timer_run(
             data.duty_factor,
             data.step_freq,
@@ -226,6 +216,7 @@ class MPCWrapper:
             input=input,
             liftoff=data.liftoff,
             contact=contact,
+            current_time=current_time,
         )
 
         # Reference generation and solver execution stay on the pure JAX path.
@@ -256,6 +247,7 @@ class MPCWrapper:
         )
 
         data = data.replace(
+            time=current_time,
             X0=X0,
             U0=U0,
             V0=V0,
@@ -286,6 +278,7 @@ class MPCWrapper:
             U0=self.initial_U0,
             X0=jnp.tile(initial_state, (self.config.N + 1, 1)),
             V0=self.initial_V0,
+            time=jnp.asarray(0.0, dtype=jnp.float32),
             contact_time=self.config.timer_t,
             liftoff=jnp.ravel(foot),
         )
@@ -320,9 +313,11 @@ class MPCWrapper:
 
         # Keep the offline warm start aligned with the nominal reference seed.
         # The old wrapper started from `initial_X0`, not from the measured feet.
-        X0 = self.initial_X0.at[:, : 13 + self.config.n_joints].set(
-            reference[:, : 13 + self.config.n_joints]
+        reference_state = jnp.concatenate(
+            [reference["p"], reference["quat"], reference["q"]],
+            axis=1,
         )
+        X0 = self.initial_X0.at[:, : 7 + self.config.n_joints].set(reference_state)
         U0 = self.initial_U0
         V0 = self.initial_V0
 
