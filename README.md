@@ -43,32 +43,46 @@ The solver is wrapped by the `MPCControllerWrapper` class, and all the settings 
 You can switch between two solvers, Primal-dual LQR of GPU-FDDP. Just change the flang in the config `solver_mode = "fddp" or "primal_dual`. 
 ## Installation
 
+### Prerequisites
+- Install [Pixi](https://pixi.prefix.dev/latest/) - a fast conda package manager
+
 ### Clone the repo
 ```
 git clone git@github.com:iit-DLSLab/mpx.git
 cd mpx && git submodule update --init --recursive
 ```
 
-### Set Up Conda Environment
-Create and activate the conda environment:
-```
-conda create -n mpx_env python=3.13 -y
-conda activate mpx_env
+### Set Up Environment with Pixi
+Pixi will automatically manage your environment with all dependencies including ROS 2 Humble, JAX, and build tools:
+
+```bash
+# Initialize the Pixi environment
+pixi install
+
+# Activate the environment
+pixi shell
 ```
 
-### Install with pip 
-from the repo main folder
-```
+### Alternative: Traditional Conda Setup (Deprecated)
+For reference, the legacy conda setup is:
+```bash
+conda create -n mpx_env python=3.13 -y
+conda activate mpx_env
 pip install -e .
 ```
 
 
 ## RUN example
-```
-conda activate mpx_env
+```bash
+# Using Pixi
+pixi run python mpx/examples/mjx_quad.py
+
+# Or activate the environment first
+pixi shell
 python mpx/examples/mjx_quad.py
-## Use the keyboard's arrows to control the robot ##
 ```
+
+Use the keyboard's arrows to control the robot.
 
 > **Note:**  
 The first time running the script it can take more than a minute to JIT the solver
