@@ -1,9 +1,11 @@
 import os
 from functools import partial
+import time
 
 import jax
 import jax.numpy as jnp
 
+from mpx.utils import mpc_utils
 import mpx.utils.models as mpc_dyn_model
 import mpx.utils.objectives as mpc_objectives
 
@@ -12,10 +14,8 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 model_path = os.path.abspath(os.path.join(dir_path, "..")) + "/data/boston_dynamics_spot/scene_arm.xml"
 
 # Contact frame names and body names for the Spot feet / lower legs.
-contact_frame = ["FL", "FR", "HL", "HR"]
-body_name = ["fl_lleg", "fr_lleg", "hl_lleg", "hr_lleg"]
-# contact_frame = ["FL", "FR", "RL", "RR"]
-# body_name = ["FL_calf", "FR_calf", "RL_calf", "RR_calf"]
+contact_frame = ["FL", "FR", "HL", "HR","arm"]
+body_name = ["fl_lleg", "fr_lleg", "hl_lleg", "hr_lleg","arm_link_fngr"]
 
 # Time and stage parameters.
 dt = 0.02
@@ -31,6 +31,7 @@ step_height = 0.12
 # robot_height = 0.40
 initial_height = 0.46
 robot_height = 0.46
+clearance_speed = 0.2
 
 # Initial base state and nominal joint posture.
 p0 = jnp.array([0.0, 0.0, initial_height])
@@ -45,56 +46,43 @@ p_legs0 = jnp.array([
     -0.34, 0.175, 0.0,
     -0.34, -0.175, 0.0,
 ])
-# p_legs0 = jnp.array([
-#         0.26635823,  0.1658,      0.03254209,
-#         0.26635823, -0.1658,      0.03254209,
-#         -0.32934177,  0.1658,      0.03254209,
-#         -0.32934177, -0.1658,      0.03254209])
 
 # Dimensions.
 n_joints = 12 + 7
-n_contact = len(contact_frame)
-n = 13 + 2 * n_joints + 6 * n_contact
+n_leg = len(contact_frame)
+n_contact = n_leg - 1 # Exclude the arm contact from the contact cost.
+n = 13 + 2 * n_joints + 3 * n_contact + 3 * n_leg
 m = n_joints
-grf_as_state = True
 
+foot_slice = slice(13 + 2 * n_joints, 13 + 2 * n_joints + 3 * (n_contact))
+leg_slice = slice(13 + 2 * n_joints, 13 + 2 * n_joints + 3 * (n_leg))
 # Reference controls.
 u_ref = jnp.zeros(m)
 
-# Cost weights.
-# Qp = jnp.diag(jnp.array([0.0, 0.0, 1e4]))
-# Qrot = jnp.diag(jnp.array([1000.0, 1000.0, 0.0])) * 10
-# # Qq = jnp.diag(jnp.ones(n_joints)) * 1e0
-# Qq = jnp.diag(jnp.concatenate([jnp.ones(7) * 1e3, jnp.ones(12) * 1e-1]))
-# Qdp = jnp.diag(jnp.array([1.0, 1.0, 1.0])) * 1e3
-# Qomega = jnp.diag(jnp.array([1.0, 1.0, 10.0])) * 1e2
-# Qdq = jnp.diag(jnp.ones(n_joints)) * 1e-1
-# Qtau = jnp.diag(jnp.ones(n_joints)) * 1e-2
-# Q_grf = jnp.diag(jnp.ones(3 * n_contact)) * 1e-2
-# Qleg = jnp.diag(jnp.tile(jnp.array([1e4, 1e4, 1e5]), n_contact))
-
-# Values for go2
+# Values for spot
 Qp    = jnp.diag(jnp.array([0, 0, 1e4]))  # Cost matrix for position
-Qrot  = jnp.diag(jnp.array([1000, 1000, 0]))  # Cost matrix for rotation
-Qq    = jnp.diag(jnp.concatenate([jnp.ones(7) * 5e2, jnp.ones(12) * 1e-1])) # Cost matrix for joint angles
-Qdp   = jnp.diag(jnp.array([1, 1, 1])) * 5e3  # Cost matrix for position derivatives
-Qomega= jnp.diag(jnp.array([1, 1, 1])) * 1e2  # Cost matrix for angular velocity
-Qdq   = jnp.diag(jnp.ones(n_joints)) * 1e-1  # Cost matrix for joint angle derivatives
+Qrot  = jnp.diag(jnp.array([100, 100, 0]))  # Cost matrix for rotation
+Qq    = jnp.diag(jnp.concatenate([jnp.ones(7) * 5e0, jnp.ones(12) * 1e-1])) # Cost matrix for joint angles
+Qdp   = jnp.diag(jnp.array([5, 5, 1])) * 1e1  # Cost matrix for position derivatives
+Qomega= jnp.diag(jnp.array([1, 1, 1])) * 1e1  # Cost matrix for angular velocity
+Qdq   = jnp.diag(jnp.ones(n_joints)) * 1e0  # Cost matrix for joint angle derivatives
 Qtau  = jnp.diag(jnp.ones(n_joints)) * 1e-2  # Cost matrix for torques
 Q_grf = jnp.diag(jnp.ones(3*n_contact)) * 1e-3 # Cost matrix for ground reaction forces
 
 # For the leg contact cost, repeat the unit cost for each contact point.
-Qleg = jnp.diag(jnp.tile(jnp.array([1e4,1e4,1e5]),n_contact))
+weight_leg = jnp.tile(jnp.array([1e3,1e3,1e5]),n_contact)
+weight_arm = jnp.array([5e4,5e4,5e4])
+Qcontact = jnp.diag(jnp.concatenate([weight_leg, weight_arm])) 
 
-W = jax.scipy.linalg.block_diag(Qp, Qrot, Qq, Qdp, Qomega, Qdq, Qleg, Qtau, Q_grf)
+W = {"pos": Qp, "rot": Qrot, "q": Qq, "vel": Qdp, "omega": Qomega, "dq": Qdq, "tau": Qtau, "contact": Qcontact, "grf": Q_grf} 
+# jax.scipy.linalg.block_diag(Qp, Qrot, Qq, Qdp, Qomega, Qdq, Qcontact, Qtau, Q_grf)
 
 use_terrain_estimation = False
-_state_extra = n - (13 + 2 * n_joints + 3 * n_contact)
 initial_state = jnp.concatenate(
-    [p0, quat0, q0, jnp.zeros(6 + n_joints), p_legs0, jnp.zeros(_state_extra)]
+    [p0, quat0, q0, jnp.zeros(6 + n_joints), p_legs0, jnp.zeros(3 + 3 * n_contact)]
 )
 
-cost = partial(mpc_objectives.quadruped_wb_obj, True, n_joints, n_contact, N)
+cost = partial(mpc_objectives.quadruped_wb_obj, True, n_joints, n_contact, n_leg, N)
 hessian_approx = None
 
 def dynamics(model, mjx_model, contact_id, body_id):
@@ -109,32 +97,58 @@ def dynamics(model, mjx_model, contact_id, body_id):
     )
 
 # Torque bounds used by the MPC cost / clipping.
-max_torque = 500
-min_torque = -500
+max_torque = 300
+min_torque = -300
 solver_mode = "primal_dual"  # Solver mode for the optimization problem
 
-extra_qref_data = {
-    "amp": jnp.array([2.0, 0.5, 0.4, 0.6, 0.7, 0.8, 0.5]),
-    "freq": jnp.array([0.2, 1.0, 1.2, 0.8, 0.9, 1.0, 0.5]),
-    "joint_index": jnp.arange(7, dtype=jnp.int32),
-}
-
-def extra_qref_fn(q_ref, current_time, data):
-    if data is None:
-        return q_ref
-
-    arm_amp_ref = data["amp"]
-    arm_freq_ref = data["freq"]
-    arm_joint_index = data["joint_index"]
+def extra_ref_fun(reference,current_time):
 
     def arm_fn(t, carry):
-        q_ref = carry
+        arm_pos_ref = carry
         #
         time_n = t * dt + current_time
-        arm_pos = arm_amp_ref * jnp.sin(2 * jnp.pi * arm_freq_ref * time_n) + q0[arm_joint_index]
+        arm_pos = jnp.array([0.75 + 0.2*time_n,0.2 * jnp.sin(2 * jnp.pi * 0.25 * time_n), 0.5 + 0.2 * jnp.cos(2 * jnp.pi * 0.25 * time_n)])
 
-        q_ref = q_ref.at[t,arm_joint_index].set(arm_pos)
-        return (q_ref)
-    init_carry = q_ref
-    q_ref = jax.lax.fori_loop(0, N+1, arm_fn, init_carry)
-    return q_ref
+        arm_pos_ref = arm_pos_ref.at[t].set(arm_pos)
+        return (arm_pos_ref)
+    init_carry = jnp.zeros((N+1, 3))
+    arm_pos_ref = jax.lax.fori_loop(0, N+1, arm_fn, init_carry)
+    reference['foot'] = jnp.concatenate([reference['foot'], arm_pos_ref], axis=1)
+    return reference
+
+reference_generator = partial(
+                mpc_utils.reference_generator,
+                use_terrain_estimation,
+                N,
+                dt,
+                n_joints,
+                n_contact,
+                foot0=p_legs0,
+                q0=q0,
+                clearence_speed=clearance_speed,
+                extra_ref_fun=extra_ref_fun
+            )
+
+import mpx.utils.mpc_wrapper as mpc_wrapper
+
+class MpcWrapper(mpc_wrapper.MPCWrapper):
+
+    def reset(self, data, qpos, qvel, foot):
+        """Reset the warm start around the provided measured state."""
+
+        # Start from the config initial_state so any extra state entries keep
+        # their configured default value.
+        initial_state = (
+            self.initial_state
+            .at[self.qpos_slice].set(jnp.ravel(qpos))
+            .at[self.qvel_slice].set(jnp.ravel(qvel))
+            .at[leg_slice].set(jnp.ravel(foot))
+        )
+        return data.replace(
+            U0=self.initial_U0,
+            X0=jnp.tile(initial_state, (self.config.N + 1, 1)),
+            V0=self.initial_V0,
+            time=jnp.asarray(0.0, dtype=jnp.float32),
+            contact_time=self.config.timer_t,
+            liftoff=jnp.ravel(foot[:12]),
+        )
