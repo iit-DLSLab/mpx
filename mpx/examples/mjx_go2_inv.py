@@ -14,7 +14,7 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 
-import mpx.config.config_go2_contact_implicit as config
+import mpx.config.config_go2_inv as config
 import mpx.utils.sim as sim_utils
 
 jax.config.update("jax_compilation_cache_dir", "./jax_cache")
@@ -36,6 +36,9 @@ def _build_solve_fn(mpc):
     return solve_mpc
 
 
+
+
+
 def main(headless=False, steps=500):
     model = mujoco.MjModel.from_xml_path(dir_path + "/../data/go2/scene_mjx.xml")
     data = mujoco.MjData(model)
@@ -53,7 +56,7 @@ def main(headless=False, steps=500):
     mpc_data = reset_mpc(mpc.make_data(), data.qpos.copy(), data.qvel.copy())
 
     warm_command = jnp.asarray(command_handle.mpc_input(config.robot_height))
-    mpc_data, tau, _, _, _, _ = solve_mpc(
+    mpc_data, tau, _, _, _, _,_ = solve_mpc(
         mpc_data,
         data.qpos.copy(),
         data.qvel.copy(),
@@ -68,25 +71,36 @@ def main(headless=False, steps=500):
     tau = jnp.zeros(config.n_joints)
     q = jnp.zeros(config.n_joints)
     dq = jnp.zeros(config.n_joints)
+    kp = 30.0
+    kd = 1.5
     trajectory_geom_ids = []
+    grf_geom_ids = []
+    reference_geom_ids = []
+    reference = None
 
     def step_controller():
-        nonlocal counter, tau, mpc_data,q,dq
+        nonlocal counter, tau, mpc_data, q, dq, reference
 
         qpos = data.qpos.copy()
         qvel = data.qvel.copy()
 
         if counter % period == 0:
             command = jnp.asarray(command_handle.mpc_input(config.robot_height))
+           
             start = timer()
-            mpc_data, tau, q, dq, alpha_best, any_accepted = solve_mpc(mpc_data, qpos, qvel, command)
+            mpc_data, tau, q, dq, alpha_best, any_accepted, reference = solve_mpc(mpc_data, qpos, qvel, command)
             tau.block_until_ready()
             stop = timer()
             print(f"MPC time: {1e3 * (stop - start):.2f} ms")
             print("regularization:", mpc_data.regularization)
             print("alpha_best:", alpha_best)
             print("line_search_accepted:", any_accepted)
-        data.ctrl = np.asarray(tau)  # PD control with feedforward tau
+        feedback_tau = (
+            np.asarray(tau)
+            + kp * (np.asarray(q) - data.qpos[7:19])
+            + kd * (np.asarray(dq) - data.qvel[6:18])
+        )
+        data.ctrl = np.clip(feedback_tau, config.min_torque, config.max_torque)
         mujoco.mj_step(model, data)
         counter += 1
 
