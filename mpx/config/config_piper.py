@@ -9,7 +9,6 @@ from mujoco.mjx._src.dataclasses import PyTreeNode
 from mujoco.mjx._src import smooth
 
 from mpx.jax_ocp_solvers.jax_ocp_solvers import optimizers
-from mpx.utils.objectives import penalty
 
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
@@ -22,7 +21,7 @@ dt = 0.02
 N = 50
 mpc_frequency = 50.0
 solver_mode = "equality"
-equality_num_alpha = 16
+equality_num_alpha = 8
 
 regularization = jnp.array(1e-6,dtype=jnp.float32)
 merit_penalty = jnp.array(1e-6,dtype=jnp.float32)
@@ -39,6 +38,7 @@ nv = n_joints
 n = nq + nv
 m = nv + n_joints
 equality_dim = nv
+inequality_dim = 2 * n_joints
 
 qacc_slice = slice(0, nv)
 tau_slice = slice(nv, nv + n_joints)
@@ -68,8 +68,8 @@ if not _MODEL.jnt_limited[:n_joints].all():
     raise ValueError("All controlled Piper joints must define position limits")
 joint_position_min = jnp.asarray(_MODEL.jnt_range[:n_joints, 0])
 joint_position_max = jnp.asarray(_MODEL.jnt_range[:n_joints, 1])
-joint_limit_barrier_weight = 0.01
-joint_limit_barrier_relaxation = 0.05
+barrier_parameter = jnp.array(1.0, dtype=jnp.float32)
+multiplier_regularization = jnp.array(1e-8, dtype=jnp.float32)
 _INITIAL_DATA = mujoco.MjData(_MODEL)
 _INITIAL_DATA.qpos[:] = q0
 mujoco.mj_forward(_MODEL, _INITIAL_DATA)
@@ -130,6 +130,18 @@ def _equilibrium_control(qpos, qvel):
     tau = data.qfrc_bias - data.qfrc_passive
     return jnp.concatenate([qacc, tau])
 
+
+def inequality(x, u, t, parameter):
+    """Joint position bounds, feasible when values are <= 0."""
+    del u, t, parameter
+    qpos, _ = _state_parts(x)
+    return jnp.concatenate(
+        [
+            joint_position_min - qpos,
+            qpos - joint_position_max,
+        ]
+    )
+
 def cost(W, reference, x, u, t):
     qpos, qvel = _state_parts(x)
     q = qpos
@@ -148,18 +160,6 @@ def cost(W, reference, x, u, t):
     end_effector_position = data.geom_xpos[_CONTACT_ID[0]]
     end_effector_error = end_effector_position - p_ref
     joint_error = q - q_ref
-    joint_limit_cost = jnp.sum(
-        penalty(
-            q - joint_position_min,
-            alpha=joint_limit_barrier_weight,
-            sigma=joint_limit_barrier_relaxation,
-        )
-        + penalty(
-            joint_position_max - q,
-            alpha=joint_limit_barrier_weight,
-            sigma=joint_limit_barrier_relaxation,
-        )
-    )
 
     stage_cost = (
           joint_error.T @ W["Qq"] @ joint_error
@@ -167,13 +167,11 @@ def cost(W, reference, x, u, t):
         + acc.T @ W["Qacc"] @ acc
         + tau.T @ W["Qtau"] @ tau
         + end_effector_error.T @ W["Qee"] @ end_effector_error
-        + joint_limit_cost
     )
     terminal_cost = (
         joint_error.T @ W["Qq"] @ joint_error
         + (dq - dq_ref).T @ W["Qdq"] @ (dq - dq_ref)
         + end_effector_error.T @ W["Qee_final"] @ end_effector_error
-        + joint_limit_cost
     )
     return jnp.where(t == N, 0.5 * terminal_cost, 0.5 * stage_cost)
 
@@ -184,13 +182,18 @@ class InverseDynamicsMPCData(PyTreeNode):
     U0: jnp.ndarray
     V0: jnp.ndarray
     Veq0: jnp.ndarray
+    Vineq0: jnp.ndarray
+    slack0: jnp.ndarray
     W: jnp.ndarray
     regularization: jnp.ndarray
     merit_penalty: jnp.ndarray
+    barrier_parameter: jnp.ndarray
 
 
 @partial(jax.jit, static_argnums=(0, 1))
-def _update_warm_start(horizon, shift, u_ref, x0, X_prev, U_prev, X, U, V, Veq):
+def _update_warm_start(
+    horizon, shift, u_ref, x0, X_prev, U_prev, X, U, V, Veq, Vineq, slack
+):
     q_slice = slice(0, n_joints)
     dq_slice = slice(nq, nq + n_joints)
     u_fallback_idx = 1 if horizon > 1 else 0
@@ -205,6 +208,8 @@ def _update_warm_start(horizon, shift, u_ref, x0, X_prev, U_prev, X, U, V, Veq):
             shift_trajectory(X),
             shift_trajectory(V),
             shift_trajectory(Veq),
+            shift_trajectory(Vineq),
+            shift_trajectory(slack),
             X[1, q_slice],
             X[1, dq_slice],
         )
@@ -215,6 +220,8 @@ def _update_warm_start(horizon, shift, u_ref, x0, X_prev, U_prev, X, U, V, Veq):
             jnp.tile(x0, (horizon + 1, 1)),
             jnp.zeros_like(X_prev),
             jnp.zeros((horizon, equality_dim), dtype=X_prev.dtype),
+            shift_trajectory(Vineq),
+            shift_trajectory(slack),
             X_prev[1, q_slice],
             X_prev[1, dq_slice],
         )
@@ -239,15 +246,24 @@ class MPCWrapper:
         self.initial_U0 = jnp.tile(config.u_ref, (config.N, 1))
         self.initial_V0 = jnp.zeros((config.N + 1, config.n))
         self.initial_Veq0 = jnp.zeros((config.N, config.equality_dim))
+        initial_g = jax.vmap(config.inequality)(
+            self.initial_X0[:-1],
+            self.initial_U0,
+            jnp.arange(config.N),
+            jnp.zeros((config.N, 1)),
+        )
+        self.initial_slack0 = jnp.maximum(-initial_g, 1e-2)
+        self.initial_Vineq0 = config.barrier_parameter / self.initial_slack0
         
         self.dynamics = config.dynamics
         solver = partial(
-            optimizers.mpc_equality,
+            optimizers.ip_mpc,
             config.cost,
             self.dynamics,
             None,
             limited_memory,
             equality=config.equality,
+            inequality=config.inequality,
             num_alpha=config.equality_num_alpha,
         )
 
@@ -260,7 +276,10 @@ class MPCWrapper:
             U0,
             V0,
             Veq0,
+            Vineq0,
+            slack0,
             regularization,
+            current_barrier_parameter,
         ):
             return solver(
                 reference,
@@ -271,7 +290,11 @@ class MPCWrapper:
                 U0,
                 V0,
                 Veq_in=Veq0,
+                Vineq_in=Vineq0,
+                slack_in=slack0,
                 regularization=regularization,
+                barrier_parameter=current_barrier_parameter,
+                multiplier_regularization=config.multiplier_regularization,
             )
 
         self._solve = solve
@@ -289,9 +312,12 @@ class MPCWrapper:
             U0=self.initial_U0,
             V0=self.initial_V0,
             Veq0=self.initial_Veq0,
+            Vineq0=self.initial_Vineq0,
+            slack0=self.initial_slack0,
             W=W,
             regularization=regularization,
             merit_penalty=merit_penalty,
+            barrier_parameter=barrier_parameter,
         )
 
     def _reference(self, x, command):
@@ -311,7 +337,18 @@ class MPCWrapper:
         del contact
         reference = self._reference(x, command)
         parameter = jnp.zeros((N + 1, 1), dtype=x.dtype)
-        X, U, V, Veq, regularization, alpha_best, any_accepted = self._solve(
+        (
+            X,
+            U,
+            V,
+            Veq,
+            Vineq,
+            slack,
+            regularization,
+            next_barrier_parameter,
+            alpha_best,
+            any_accepted,
+        ) = self._solve(
             reference,
             parameter,
             data.W,
@@ -320,7 +357,10 @@ class MPCWrapper:
             data.U0,
             data.V0,
             data.Veq0,
+            data.Vineq0,
+            data.slack0,
             data.regularization,
+            data.barrier_parameter,
         )
         valid_solution = jnp.isfinite(U).all()
         tau = jax.lax.cond(
@@ -329,7 +369,7 @@ class MPCWrapper:
             lambda _: self.control_output(x, data.X0, data.U0, reference, parameter),
             operand=None,
         )
-        U0, X0, V0, Veq0, q, dq = self._update_warm_start(
+        U0, X0, V0, Veq0, Vineq0, slack0, q, dq = self._update_warm_start(
             x,
             data.X0,    
             data.U0,
@@ -337,6 +377,8 @@ class MPCWrapper:
             U,
             V,
             Veq,
+            Vineq,
+            slack,
         )
         # jax.debug.print("====================" )
         return data.replace(
@@ -344,7 +386,10 @@ class MPCWrapper:
             U0=U0,
             V0=V0,
             Veq0=Veq0,
+            Vineq0=Vineq0,
+            slack0=slack0,
             regularization=regularization,
+            barrier_parameter=jnp.maximum(next_barrier_parameter, 1e-8),
         ), tau, q, dq, alpha_best, any_accepted
 
     def reset(self, data, qpos, qvel, foot=None):
@@ -356,13 +401,21 @@ class MPCWrapper:
         nominal_control = _equilibrium_control(
             x[self.qpos_slice], x[self.qvel_slice]
         )
+        X0 = jnp.tile(x, (N + 1, 1))
+        U0 = jnp.tile(nominal_control, (N, 1))
+        parameters = jnp.zeros((N, 1), dtype=x.dtype)
+        g = jax.vmap(inequality)(X0[:-1], U0, jnp.arange(N), parameters)
+        slack0 = jnp.maximum(-g, 1e-2)
         return data.replace(
-            X0=jnp.tile(x, (N + 1, 1)),
-            U0=jnp.tile(nominal_control, (N, 1)),
+            X0=X0,
+            U0=U0,
             V0=self.initial_V0,
             Veq0=self.initial_Veq0,
+            Vineq0=barrier_parameter / slack0,
+            slack0=slack0,
             regularization=regularization,
             merit_penalty=merit_penalty,
+            barrier_parameter=barrier_parameter,
         )
 
 
