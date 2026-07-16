@@ -5,11 +5,11 @@ import jax
 import jax.numpy as jnp
 import mujoco
 from mujoco import mjx
-from mujoco.mjx._src import math
 from mujoco.mjx._src.dataclasses import PyTreeNode
-from mujoco.mjx._src import math, smooth
+from mujoco.mjx._src import smooth
 
 from mpx.jax_ocp_solvers.jax_ocp_solvers import optimizers
+from mpx.utils.objectives import penalty
 
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
@@ -18,80 +18,72 @@ model_path = os.path.abspath(os.path.join(dir_path, "..")) + "/data/piper_l/scen
 contact_frame = ["end_effector"]
 body_name = ["link6"]#, "link8"]
 
-dt = 0.01
+dt = 0.02
 N = 50
-mpc_frequency = 100.0
+mpc_frequency = 50.0
 solver_mode = "equality"
-equality_num_alpha = 5
+equality_num_alpha = 16
 
 regularization = jnp.array(1e-6,dtype=jnp.float32)
 merit_penalty = jnp.array(1e-6,dtype=jnp.float32)
 
-contact_stiffness = 1000.0
-terrain_contact_stiffness = 1000.0
-contact_smoothing = 0.005
-terrain_contact_smoothing = 0.001
-contact_dissipation_velocity = 0.1
-friction_coefficient = 0.6
-friction_coefficient_terrain = 0.7
-stiction_velocity = 0.05
-cube_half_extent = 0.035
-cube_contact_radius = cube_half_extent
 
-q0 = jnp.array([0, 0, -0., -0., 0, 0, 0.3, 0.0,0.11,1.0,0,0,0])
-object_goal = jnp.array([0.8, 0.0])
-# q0 = jnp.concatenate([q_grasp, jnp.array([0.3, 0.0, 0.11, 1.0, 0.0, 0.0, 0.0])])
+q0 = jnp.array([0, 0, -0., -0., 0, 0])
 q0_init = q0
 
 
 n_joints = 6
 n_contact = len(contact_frame)
-nq = n_joints + 7
-nv = n_joints + 6
-nx_error = 2 * n_joints + 3
+nq = n_joints
+nv = n_joints
 n = nq + nv
-m = nv + nv
+m = nv + n_joints
 equality_dim = nv
 
 qacc_slice = slice(0, nv)
-tau_slice = slice(nv, nv + nv)
+tau_slice = slice(nv, nv + n_joints)
 
-Qpos = jnp.diag(jnp.ones(2))*100
-Qq = jnp.diag(jnp.ones(n_joints)) * 0.1
-Qdq = jnp.diag(jnp.ones(n_joints)) * 0.1
-Qacc = jnp.diag(jnp.ones(nv)) * 0.01
-Q_acc_tau = jnp.ones(n_joints) * 1e-2
-Q_unacc_tau = jnp.ones(nv - n_joints) * 1e4
-Qtau = jnp.diag(jnp.concatenate([Q_acc_tau, Q_unacc_tau]))
+Qq = jnp.diag(jnp.ones(n_joints)) * 0.01
+Qdq = jnp.diag(jnp.ones(n_joints)) * 0.2
+Qacc = jnp.diag(jnp.ones(nv)) * 0.001
+Qtau = jnp.diag(jnp.ones(n_joints)) * 0.0001
 Qee = jnp.diag(jnp.ones(3)) * 100.0
+Qee_final = jnp.diag(jnp.ones(3)) * 500.0
 W = {
-    "Qpos": Qpos,
     "Qq": Qq,
     "Qdq": Qdq,
     "Qacc": Qacc,
     "Qtau": Qtau,
-    "Qee": Qee
+    "Qee": Qee,
+    "Qee_final": Qee_final,
 }
 
 initial_state = jnp.concatenate([q0, jnp.zeros(nv)])
 
-max_torque = 30.0
-min_torque = -30.0
-u_ref = jnp.zeros(m)
-
+max_torque = jnp.array([32.0, 32.0, 32.0, 8.0, 8.0, 8.0])
+min_torque = -max_torque
 _MODEL = mujoco.MjModel.from_xml_path(model_path)
 _MODEL.opt.timestep = dt
+if not _MODEL.jnt_limited[:n_joints].all():
+    raise ValueError("All controlled Piper joints must define position limits")
+joint_position_min = jnp.asarray(_MODEL.jnt_range[:n_joints, 0])
+joint_position_max = jnp.asarray(_MODEL.jnt_range[:n_joints, 1])
+joint_limit_barrier_weight = 0.01
+joint_limit_barrier_relaxation = 0.05
+_INITIAL_DATA = mujoco.MjData(_MODEL)
+_INITIAL_DATA.qpos[:] = q0
+mujoco.mj_forward(_MODEL, _INITIAL_DATA)
+u_ref = jnp.concatenate(
+    [
+        jnp.zeros(nv),
+        jnp.asarray(_INITIAL_DATA.qfrc_bias - _INITIAL_DATA.qfrc_passive),
+    ]
+)
 _MJX_MODEL = mjx.put_model(_MODEL)
 _CONTACT_ID = [
     mjx.name2id(_MJX_MODEL, mujoco.mjtObj.mjOBJ_GEOM, name)
     for name in contact_frame
 ]
-_CONTACT_HALF_SIZE = jnp.asarray([_MODEL.geom_size[contact_id] for contact_id in _CONTACT_ID])
-_BODY_ID = [
-    mjx.name2id(_MJX_MODEL, mujoco.mjtObj.mjOBJ_BODY, name)
-    for name in body_name
-]
-
 
 def _state_parts(x):
     qpos = x[:nq]
@@ -99,230 +91,89 @@ def _state_parts(x):
     return qpos, qvel
 
 
-def _integrate_state(qpos, qvel, qacc):
+def _backward_euler_state(qpos, qvel, qacc):
+    """Integrates a stage using its endpoint acceleration and velocity."""
     qvel_next = qvel + qacc * dt
-    qpos_joints = qpos[:n_joints] + qvel_next[:n_joints] * dt
-    # qpos_next = qvel_next * dt + qpos
-    qpos_next = jnp.concatenate(
-        [
-            qpos_joints,
-            qpos[n_joints:n_joints+3] + qvel_next[n_joints:n_joints+3] * dt,
-            math.quat_integrate(qpos[n_joints+3:n_joints+7], qvel_next[n_joints+3:n_joints+6], dt),
-        ]
-    )
-    return qpos_next, qvel_next
+    qpos_joints = qpos + qvel_next * dt
+    return qpos_joints, qvel_next
 
 
 def dynamics(x, u, t, parameter):
     del t, parameter
     qpos, qvel = _state_parts(x)
     qacc = u[qacc_slice]
-    qpos_next, qvel_next = _integrate_state(qpos, qvel, qacc)
+    qpos_next, qvel_next = _backward_euler_state(qpos, qvel, qacc)
     return jnp.concatenate([qpos_next, qvel_next])
 
-def _normal_dissipation(normal_velocity):
-    velocity_ratio = normal_velocity / contact_dissipation_velocity
-    separating = 0.25 * (velocity_ratio - 2.0) ** 2
-    approaching = 1.0 - velocity_ratio
-    return jnp.where(
-        velocity_ratio < 0.0,
-        approaching,
-        jnp.where(velocity_ratio < 2.0, separating, 0.0),
-    )
-
-@jax.jit
-def contact_force_from_state(foot_position, foot_velocity,body_position,body_velocity):
-    delta_world = foot_position - body_position
-    signed_distance = jnp.sqrt(jnp.sum(delta_world**2) + 1e-6) - cube_contact_radius
-    normal_vector = delta_world / (math.norm(delta_world) + 1e-6)
-    relative_velocity = foot_velocity-body_velocity
-    normal_velocity = jnp.dot(relative_velocity, normal_vector)
-    tangential_velocity_world = relative_velocity - normal_velocity * normal_vector
-    compliance = (
-        contact_smoothing
-        * contact_stiffness
-        * jax.nn.softplus(-signed_distance / contact_smoothing)
-    )
-    normal_force = compliance* _normal_dissipation(normal_velocity)
-    vt2 = jnp.dot(tangential_velocity_world, tangential_velocity_world)
-    denom = jnp.sqrt(stiction_velocity**2 + vt2)
-    tangential_force_world = (
-        -friction_coefficient
-        * normal_force
-        * tangential_velocity_world 
-        / denom
-    )
-    total_force = normal_force * normal_vector + tangential_force_world
-    return total_force
-
-
-def contact_with_terrain(body_position,body_velocity):
-    signed_distance = body_position[2] - cube_half_extent
-    normal_velocity = body_velocity[2]
-    tangential_velocity = jnp.array([body_velocity[0], body_velocity[1]])
-    compliance = (
-        terrain_contact_smoothing
-        * terrain_contact_stiffness
-        * jax.nn.softplus(-signed_distance / contact_smoothing)
-    )
-    normal_force = compliance * _normal_dissipation(normal_velocity)
-    tangential_force = -friction_coefficient_terrain * normal_force * tangential_velocity
-    tangential_force /= jnp.sqrt(
-        stiction_velocity**2 + jnp.dot(tangential_velocity, tangential_velocity)
-    )
-    return jnp.array([tangential_force[0], tangential_force[1], normal_force])
-
-def _contact_kinematics(data):
-    jacobians = []
-    contact_positions = []
-    for contact_id, body_id, half_size in zip(_CONTACT_ID, _BODY_ID, _CONTACT_HALF_SIZE):
-        contact_position = data.geom_xpos[contact_id]
-        jacobian, _ = mjx.jac(_MJX_MODEL, data, contact_position, body_id)
-        jacobians.append(jacobian)
-        contact_positions.append(contact_position)
-    return jnp.stack(jacobians, axis=0), jnp.stack(contact_positions, axis=0)
-
-
 def equality(x, u, t, parameter):
-    # del t
+    del t, parameter
     qpos, qvel = _state_parts(x)
     qacc = u[qacc_slice]
-    qpos_next, qvel_next = _integrate_state(qpos, qvel, qacc)    
+    qpos_next, qvel_next = _backward_euler_state(qpos, qvel, qacc)
     tau = u[tau_slice]
     data = mjx.make_data(_MJX_MODEL)
     data = data.replace(qpos=qpos_next, qvel=qvel_next)
     data = mjx.fwd_position(_MJX_MODEL, data)
     data = mjx.fwd_velocity(_MJX_MODEL, data)
-    M = data.qM
-    D = data.qfrc_bias
-    qfrc_inverse = M @ qacc + D
 
-    object_position = data.qpos[n_joints:n_joints+3]
-    object_velocity = data.qvel[n_joints:n_joints+3]
-    contact_jacobians, contact_positions = _contact_kinematics(data)
-    contact_velocities = jax.vmap(lambda jacobian: jacobian.T @ qvel_next)(contact_jacobians)
-    arm_box_forces = jax.vmap(
-        lambda contact_position, contact_velocity: contact_force_from_state(
-            contact_position,
-            contact_velocity,
-            object_position,
-            object_velocity,
-        )
-    )(contact_positions, contact_velocities)
-    contact_jacobian = jnp.concatenate(contact_jacobians, axis=1)
-    arm_wrench = (contact_jacobian @ arm_box_forces.reshape(-1))[:-6]
+    residual = data.qM @ qacc + data.qfrc_bias - data.qfrc_passive - tau
 
-    box_terrain_force = contact_with_terrain(object_position, object_velocity)
-    object_force = box_terrain_force + jnp.sum(-arm_box_forces, axis=0)
-    # jax.debug.print("arm_box_forces: {}, time: {}", arm_box_forces,t)
-    contact_wrench = jnp.concatenate([arm_wrench, object_force, jnp.zeros(3, dtype=x.dtype)])
-    # contact_wrench = jnp.concatenate([arm_wrench, object_force, jnp.zeros(3)])
-    generalized_actuation = tau
-    return qfrc_inverse - contact_wrench - generalized_actuation
-
-class ForwardDynamicsInfo(PyTreeNode):
-    qacc: jnp.ndarray
-    contact_positions: jnp.ndarray
-    arm_box_forces: jnp.ndarray
-    box_terrain_force: jnp.ndarray
-    box_terrain_position: jnp.ndarray
-    contact_wrench: jnp.ndarray
+    return residual
 
 
-def forward_dynamics(x, tau):
-    qpos, qvel = _state_parts(x)
-    tau = jnp.asarray(tau, dtype=x.dtype)
-    if tau.shape[0] == n_joints:
-        generalized_actuation = jnp.concatenate(
-            [tau, jnp.zeros(nv - n_joints, dtype=x.dtype)]
-        )
-    elif tau.shape[0] == nv:
-        generalized_actuation = tau
-    else:
-        raise ValueError(f"Expected tau to have shape ({n_joints},) or ({nv},), got {tau.shape}.")
-
-    data = mjx.make_data(_MJX_MODEL)
-    data = data.replace(qpos=qpos, qvel=qvel)
+def _equilibrium_control(qpos, qvel):
+    qacc = jnp.zeros(nv, dtype=qpos.dtype)
+    qpos_next, qvel_next = _backward_euler_state(qpos, qvel, qacc)
+    data = mjx.make_data(_MJX_MODEL).replace(qpos=qpos_next, qvel=qvel_next)
     data = mjx.fwd_position(_MJX_MODEL, data)
     data = mjx.fwd_velocity(_MJX_MODEL, data)
-
-    mass_matrix = data.qM
-    bias = data.qfrc_bias
-
-    object_position = qpos[n_joints : n_joints + 3]
-    object_velocity = qvel[n_joints : n_joints + 3]
-    contact_jacobians, contact_positions = _contact_kinematics(data)
-    contact_velocities = jax.vmap(lambda jacobian: jacobian.T @ qvel)(contact_jacobians)
-
-    arm_box_forces = jax.vmap(
-        lambda contact_position, contact_velocity: contact_force_from_state(
-            contact_position,
-            contact_velocity,
-            object_position,
-            object_velocity,
-        )
-    )(contact_positions, contact_velocities)
-    contact_jacobian = jnp.concatenate(contact_jacobians, axis=1)
-    arm_wrench = (contact_jacobian @ arm_box_forces.reshape(-1))[:-6]
-
-    box_terrain_force = contact_with_terrain(object_position, object_velocity)
-    object_force = box_terrain_force + jnp.sum(-arm_box_forces, axis=0)
-    contact_wrench = jnp.concatenate([arm_wrench, object_force, jnp.zeros(3, dtype=x.dtype)])
-
-    rhs = generalized_actuation + contact_wrench - bias
-    qacc = jnp.linalg.solve(mass_matrix + 1e-6 * jnp.eye(nv, dtype=x.dtype), rhs)
-    qpos_next, qvel_next = _integrate_state(qpos, qvel, qacc)
-    x_next = jnp.concatenate([qpos_next, qvel_next])
-
-    info = ForwardDynamicsInfo(
-        qacc=qacc,
-        contact_positions=contact_positions,
-        arm_box_forces=arm_box_forces,
-        box_terrain_force=box_terrain_force,
-        box_terrain_position=object_position + jnp.array([0.0, 0.0, -cube_half_extent], dtype=x.dtype),
-        contact_wrench=contact_wrench,
-    )
-    return x_next, info
+    tau = data.qfrc_bias - data.qfrc_passive
+    return jnp.concatenate([qacc, tau])
 
 def cost(W, reference, x, u, t):
     qpos, qvel = _state_parts(x)
-    body_position = qpos[n_joints:n_joints+3]  # Adjusted for 2D case
-    q = qpos[:n_joints]
-    dq = qvel[:n_joints]
+    q = qpos
+    dq = qvel
     acc = u[qacc_slice]
     tau = u[tau_slice]
 
-    q_ref = reference[t, : n_joints]
-    dq_ref = reference[t, n_joints : 2*n_joints]
-    p_ref = reference[t, 2*n_joints: 2*n_joints+2]
+    q_ref = reference["q"][t]
+    dq_ref = reference["dq"][t]
+    p_ref = reference["p"][t]
 
     data = mjx.make_data(_MJX_MODEL)
     data = data.replace(qpos=qpos, qvel=qvel)
     data = smooth.kinematics(_MJX_MODEL, data)
 
-    contact_positions = []
-    for contact_id in zip(_CONTACT_ID):
-        contact_position = data.geom_xpos[contact_id]
-        contact_positions.append(contact_position)
-    end_effector_position = jnp.stack(contact_positions, axis=0)
-
+    end_effector_position = data.geom_xpos[_CONTACT_ID[0]]
+    end_effector_error = end_effector_position - p_ref
+    joint_error = q - q_ref
+    joint_limit_cost = jnp.sum(
+        penalty(
+            q - joint_position_min,
+            alpha=joint_limit_barrier_weight,
+            sigma=joint_limit_barrier_relaxation,
+        )
+        + penalty(
+            joint_position_max - q,
+            alpha=joint_limit_barrier_weight,
+            sigma=joint_limit_barrier_relaxation,
+        )
+    )
 
     stage_cost = (
-        (body_position[:2] - p_ref).T @ W["Qpos"] @ (body_position[:2] - p_ref)
-        + (q - q_ref).T @ W["Qq"] @ (q - q_ref)
-        + (dq - dq_ref).T
-        @ W["Qdq"] @ (dq - dq_ref)
+          joint_error.T @ W["Qq"] @ joint_error
+        + (dq - dq_ref).T @ W["Qdq"] @ (dq - dq_ref)
         + acc.T @ W["Qacc"] @ acc
-        + (tau ).T
-        @ W["Qtau"] @ (tau) +
-        (end_effector_position.flatten()-body_position).T @ W["Qee"] @ (end_effector_position.flatten()-body_position)
+        + tau.T @ W["Qtau"] @ tau
+        + end_effector_error.T @ W["Qee"] @ end_effector_error
+        + joint_limit_cost
     )
     terminal_cost = (
-        (body_position[:2] - p_ref).T @ W["Qpos"] @ (body_position[:2] - p_ref)
-        + (q - q_ref).T @ W["Qq"] @ (q - q_ref)
-        + (dq - dq_ref).T
-        @ W["Qdq"] @ (dq - dq_ref) + 
-        (end_effector_position.flatten()-body_position).T @ W["Qee"] @ (end_effector_position.flatten()-body_position)
+        joint_error.T @ W["Qq"] @ joint_error
+        + (dq - dq_ref).T @ W["Qdq"] @ (dq - dq_ref)
+        + end_effector_error.T @ W["Qee_final"] @ end_effector_error
+        + joint_limit_cost
     )
     return jnp.where(t == N, 0.5 * terminal_cost, 0.5 * stage_cost)
 
@@ -368,7 +219,7 @@ def _update_warm_start(horizon, shift, u_ref, x0, X_prev, U_prev, X, U, V, Veq):
             X_prev[1, dq_slice],
         )
 
-    valid_solution = jnp.logical_not(jnp.isnan(U[0, 0]))
+    valid_solution = jnp.isfinite(U).all()
     return jax.lax.cond(valid_solution, safe_update, unsafe_update)
 
 
@@ -391,7 +242,7 @@ class MPCWrapper:
         
         self.dynamics = config.dynamics
         solver = partial(
-            optimizers.mpc_equality_fddp,
+            optimizers.mpc_equality,
             config.cost,
             self.dynamics,
             None,
@@ -400,8 +251,28 @@ class MPCWrapper:
             num_alpha=config.equality_num_alpha,
         )
 
-        def solve(reference, parameter, W, x0, X0, U0, V0, Veq0, regularization,merit_penalty):
-            return solver(reference, parameter, W, x0, X0, U0, V0, Veq_in=Veq0, regularization=regularization, merit_penalty=merit_penalty)
+        def solve(
+            reference,
+            parameter,
+            W,
+            x0,
+            X0,
+            U0,
+            V0,
+            Veq0,
+            regularization,
+        ):
+            return solver(
+                reference,
+                parameter,
+                W,
+                x0,
+                X0,
+                U0,
+                V0,
+                Veq_in=Veq0,
+                regularization=regularization,
+            )
 
         self._solve = solve
         self._update_warm_start = partial(
@@ -424,12 +295,13 @@ class MPCWrapper:
         )
 
     def _reference(self, x, command):
-        # times = jnp.arange(N + 1, dtype=x.dtype) * dt
-        p_ref = jnp.tile(object_goal, (N + 1, 1))
-        q_refs = jnp.tile(q0[:n_joints], (N + 1, 1))
-        dq_refs = jnp.zeros((N + 1, n_joints))
-
-        return jnp.concatenate([q_refs, dq_refs, p_ref], axis=1)
+        qpos, qvel = _state_parts(x)
+        goal = command["goal"]
+        return {
+            "p": jnp.tile(goal, (N + 1, 1)),
+            "q": jnp.tile(qpos, (N + 1, 1)),
+            "dq": jnp.zeros((N + 1, n_joints)),
+        }
 
     def control_output(self, x0, X, U, reference, parameter):
         del x0, X, reference, parameter
@@ -439,7 +311,7 @@ class MPCWrapper:
         del contact
         reference = self._reference(x, command)
         parameter = jnp.zeros((N + 1, 1), dtype=x.dtype)
-        X, U, V, Veq, regularization, merit_penalty, alpha_best, any_accepted = self._solve(
+        X, U, V, Veq, regularization, alpha_best, any_accepted = self._solve(
             reference,
             parameter,
             data.W,
@@ -449,9 +321,8 @@ class MPCWrapper:
             data.V0,
             data.Veq0,
             data.regularization,
-            data.merit_penalty
         )
-        valid_solution = jnp.logical_not(jnp.isnan(U[0, 0]))
+        valid_solution = jnp.isfinite(U).all()
         tau = jax.lax.cond(
             valid_solution,
             lambda _: self.control_output(x, X, U, reference, parameter),
@@ -468,7 +339,13 @@ class MPCWrapper:
             Veq,
         )
         # jax.debug.print("====================" )
-        return data.replace(X0=X0, U0=U0, V0=V0, Veq0=Veq0, regularization=regularization, merit_penalty=merit_penalty), tau, q, dq, alpha_best, any_accepted
+        return data.replace(
+            X0=X0,
+            U0=U0,
+            V0=V0,
+            Veq0=Veq0,
+            regularization=regularization,
+        ), tau, q, dq, alpha_best, any_accepted
 
     def reset(self, data, qpos, qvel, foot=None):
         del foot
@@ -476,11 +353,16 @@ class MPCWrapper:
             self.initial_state.at[self.qpos_slice].set(jnp.ravel(qpos))
             .at[self.qvel_slice].set(jnp.ravel(qvel))
         )
+        nominal_control = _equilibrium_control(
+            x[self.qpos_slice], x[self.qvel_slice]
+        )
         return data.replace(
             X0=jnp.tile(x, (N + 1, 1)),
-            U0=self.initial_U0,
+            U0=jnp.tile(nominal_control, (N, 1)),
             V0=self.initial_V0,
             Veq0=self.initial_Veq0,
+            regularization=regularization,
+            merit_penalty=merit_penalty,
         )
 
 

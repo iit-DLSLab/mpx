@@ -84,6 +84,37 @@ python mpx/examples/mjx_quad.py
 
 Use the keyboard's arrows to control the robot.
 
+## Diffusion-MPPI-guided FDDP
+
+MPX includes a receding-horizon manipulation solver that anneals a diagonal
+Gaussian in control-knot space, then refines its mean with FDDP. The local
+solver adds a temporary Gaussian precision to `l_u` and `l_uu`, decays that
+guidance each iteration, and reports physical task cost separately from prior
+cost. Original FDDP and primal-dual modes remain available.
+
+```bash
+# Interactive Push-T with live samples, mean, FDDP prediction, and history
+pixi run python -m mpx.examples.push_t_guided_mpc --viewer --verbose
+
+# Deterministic Push-T benchmark and plots
+pixi run python -m mpx.examples.push_t_guided_mpc \
+  --headless --seeds 0 1 2 3 4 --plot
+
+# Interactive full-MJX AgileX Piper box push
+pixi run python -m mpx.examples.agilex_box_push_guided_mpc --viewer --verbose
+
+# Nominal and mismatched-plant Piper benchmarks
+pixi run python -m mpx.examples.agilex_box_push_guided_mpc \
+  --headless --seeds 0 1 2 3 4 --condition nominal --plot
+pixi run python -m mpx.examples.agilex_box_push_guided_mpc \
+  --headless --condition heavy
+```
+
+Both examples accept `--mode fddp`, `--mode mppi`, `--mode mppi_fddp`, or
+`--mode guided`. See [`docs/diffusion_mppi_fddp.md`](docs/diffusion_mppi_fddp.md)
+for equations, ablations, video commands, diagnostics, model attribution, and
+measured limitations.
+
 > **Note:**  
 The first time running the script it can take more than a minute to JIT the solver
 
