@@ -27,9 +27,6 @@ regularization = jnp.array(1e-6,dtype=jnp.float32)
 merit_penalty = jnp.array(1e-6,dtype=jnp.float32)
 
 
-q0 = jnp.array([0, 0, -0., -0., 0, 0])
-q0_init = q0
-
 
 n_joints = 6
 n_contact = len(contact_frame)
@@ -43,12 +40,12 @@ inequality_dim = 2 * n_joints
 qacc_slice = slice(0, nv)
 tau_slice = slice(nv, nv + n_joints)
 
-Qq = jnp.diag(jnp.ones(n_joints)) * 0.01
+Qq = jnp.diag(jnp.ones(n_joints)) * 0.1
 Qdq = jnp.diag(jnp.ones(n_joints)) * 0.2
-Qacc = jnp.diag(jnp.ones(nv)) * 0.001
+Qacc = jnp.diag(jnp.ones(nv)) * 0.01
 Qtau = jnp.diag(jnp.ones(n_joints)) * 0.0001
-Qee = jnp.diag(jnp.ones(3)) * 100.0
-Qee_final = jnp.diag(jnp.ones(3)) * 500.0
+Qee = jnp.diag(jnp.ones(3)) * 200.0
+Qee_final = jnp.diag(jnp.ones(3)) * 1000.0
 W = {
     "Qq": Qq,
     "Qdq": Qdq,
@@ -58,8 +55,9 @@ W = {
     "Qee_final": Qee_final,
 }
 
-initial_state = jnp.concatenate([q0, jnp.zeros(nv)])
 
+obstacle_center = jnp.array([0.3, 0.0, 0.6])
+obstacle_radius = 0.2
 max_torque = jnp.array([32.0, 32.0, 32.0, 8.0, 8.0, 8.0])
 min_torque = -max_torque
 _MODEL = mujoco.MjModel.from_xml_path(model_path)
@@ -68,6 +66,9 @@ if not _MODEL.jnt_limited[:n_joints].all():
     raise ValueError("All controlled Piper joints must define position limits")
 joint_position_min = jnp.asarray(_MODEL.jnt_range[:n_joints, 0])
 joint_position_max = jnp.asarray(_MODEL.jnt_range[:n_joints, 1])
+q0 = joint_position_min + 0.5 * (joint_position_max - joint_position_min)
+q0_init = q0
+initial_state = jnp.concatenate([q0, jnp.zeros(nv)])
 barrier_parameter = jnp.array(1.0, dtype=jnp.float32)
 multiplier_regularization = jnp.array(1e-8, dtype=jnp.float32)
 _INITIAL_DATA = mujoco.MjData(_MODEL)
@@ -135,11 +136,25 @@ def inequality(x, u, t, parameter):
     """Joint position bounds, feasible when values are <= 0."""
     del u, t, parameter
     qpos, _ = _state_parts(x)
+    data = mjx.make_data(_MJX_MODEL)
+    data = data.replace(qpos=qpos)
+    data = smooth.kinematics(_MJX_MODEL, data)
+    end_effector_position = data.geom_xpos[_CONTACT_ID[0]]
+    ## obstacle avoidance constraints - sphere centered at (0.3, 0.0, 0.4) with radius 0.2
+    distance_to_obstacle = jnp.linalg.norm(end_effector_position - obstacle_center)
+    obstacle_constraint = jnp.array([obstacle_radius - distance_to_obstacle])
     return jnp.concatenate(
         [
             joint_position_min - qpos,
             qpos - joint_position_max,
+            obstacle_constraint
         ]
+    )
+
+def pseudo_huber(error, weight, delta):
+    squared_error = error.T @ weight @ error
+    return delta**2 * (
+        jnp.sqrt(1.0 + squared_error / delta**2) - 1.0
     )
 
 def cost(W, reference, x, u, t):
@@ -159,6 +174,7 @@ def cost(W, reference, x, u, t):
 
     end_effector_position = data.geom_xpos[_CONTACT_ID[0]]
     end_effector_error = end_effector_position - p_ref
+    ee_tracking_cost = pseudo_huber(end_effector_error, W["Qee"], delta=0.1)
     joint_error = q - q_ref
 
     stage_cost = (
@@ -166,7 +182,7 @@ def cost(W, reference, x, u, t):
         + (dq - dq_ref).T @ W["Qdq"] @ (dq - dq_ref)
         + acc.T @ W["Qacc"] @ acc
         + tau.T @ W["Qtau"] @ tau
-        + end_effector_error.T @ W["Qee"] @ end_effector_error
+        + ee_tracking_cost
     )
     terminal_cost = (
         joint_error.T @ W["Qq"] @ joint_error

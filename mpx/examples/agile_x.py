@@ -9,6 +9,9 @@ os.environ.setdefault("XLA_FLAGS", "--xla_gpu_enable_command_buffer=")
 
 
 import jax
+
+jax.config.update("jax_enable_x64", True)
+
 import jax.numpy as jnp
 import mujoco
 import mujoco.viewer
@@ -36,18 +39,29 @@ def _build_solve_fn(mpc):
 
     return solve_mpc
 
-def sample_reachable_position(rng, model, data, end_effector_id, qpos):
-    joint_range = model.jnt_range[: config.n_joints]
-    sample_qpos = rng.uniform(
-        low=joint_range[:, 0],
-        high=joint_range[:, 1],
-    )
-    data.qpos[:] = sample_qpos
-    data.qvel[:] = 0.0
-    mujoco.mj_forward(model, data)
-    if data.geom_xpos[end_effector_id][2] < 0.4:
-        return sample_reachable_position(rng, model, data, end_effector_id, qpos)
-    return data.geom_xpos[end_effector_id].copy()
+# def sample_reachable_position(rng, model, data, end_effector_id, qpos):
+#     joint_range = model.jnt_range[: config.n_joints]
+#     sample_qpos = rng.uniform(
+#         low=joint_range[:, 0],
+#         high=joint_range[:, 1],
+#     )
+#     data.qpos[:] = sample_qpos
+#     data.qvel[:] = 0.0
+#     mujoco.mj_forward(model, data)
+#     if data.geom_xpos[end_effector_id][2] < 0.4:
+#         return sample_reachable_position(rng, model, data, end_effector_id, qpos)
+#     return data.geom_xpos[end_effector_id].copy()
+def sample_position(indx,obstacle_center,obstacle_radius):
+    if indx == 0:
+        return np.array([0,0,obstacle_radius+0.01]) + obstacle_center
+    elif indx == 1:
+        return np.array([0.0,obstacle_radius+0.01,0.0]) + obstacle_center
+    elif indx == 2:
+        return np.array([0.0,0.0,-obstacle_radius-0.01]) + obstacle_center
+    elif indx == 3:
+        return np.array([0.0,-obstacle_radius-0.01,0.0]) + obstacle_center  
+    else:
+        raise ValueError("Invalid index for sample_position")
 
 def main():
     model = mujoco.MjModel.from_xml_path(dir_path + "/../data/piper_l/scene_flat.xml")
@@ -65,9 +79,8 @@ def main():
     end_effector_id = mujoco.mj_name2id(
         model, mujoco.mjtObj.mjOBJ_GEOM, config.contact_frame[0]
     )
-    desired_position = sample_reachable_position(
-        rng, model, target_data, end_effector_id, config.q0
-    )
+    des_pos_idx = 0
+    desired_position = sample_position(des_pos_idx, config.obstacle_center, config.obstacle_radius)
 
     data.qpos = np.asarray(config.q0)
     mujoco.mj_forward(model, data)
@@ -86,7 +99,7 @@ def main():
     q = jnp.zeros(config.n_joints)
     dq = jnp.zeros(config.n_joints)
     def step_controller():
-        nonlocal counter, tau, mpc_data, desired_position, target_start_counter, q, dq
+        nonlocal counter, tau, mpc_data, desired_position, target_start_counter, q, dq, des_pos_idx
 
         qpos = data.qpos.copy()
         qvel = data.qvel.copy()
@@ -107,9 +120,8 @@ def main():
         counter += 1
         timed_out = counter - target_start_counter >= max_steps_per_target
         if timed_out:
-            desired_position = sample_reachable_position(
-                rng, model, target_data, end_effector_id, data.qpos
-            )
+            des_pos_idx = (des_pos_idx + 1) % 4
+            desired_position = sample_position(des_pos_idx, config.obstacle_center, config.obstacle_radius)
             target_start_counter = counter
             mpc_data = reset_mpc(
                 mpc.make_data(), data.qpos.copy(), data.qvel.copy()
@@ -120,13 +132,19 @@ def main():
         model,
         data
     ) as viewer:
-        viewer.sync()
+        
         desired_position_geom_id = sim_utils.render_sphere(
                 viewer,
                 desired_position,
                 diameter=0.05,
                 color=np.array([0.0, 0.0, 1.0, 0.5]))
-
+        obstacle_geom_id = sim_utils.render_sphere(
+                viewer,
+                config.obstacle_center,
+                diameter=config.obstacle_radius*2,
+                color=np.array([1.0, 0.0, 0.0, 0.5])
+        )
+        viewer.sync()
         while viewer.is_running():
             tic = timer()
             step_controller()
