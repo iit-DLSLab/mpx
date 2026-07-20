@@ -36,12 +36,24 @@ The solver is wrapped by the `MPCControllerWrapper` class, and all the settings 
 > `MPCWrapper` is designed to use the whole body model, if you want to use the srbd model, use `mpc_wrapper_srbd.py`; look at examples/srbd_quad.py
 
 ## Task examples
-| Acrobot Swing-Up | Quadruped Trot | Humanoid Jump | Quadruped Barrel roll |
-|---|---|---|---|
-| <img src="https://github.com/user-attachments/assets/af15576c-8fab-4e53-ac06-8f9e648703f6" width="100%" /> | <img src="https://github.com/user-attachments/assets/51f7eb3e-b344-4a92-9b16-837ca5dc71c6" width="100%" /> | <img src="https://github.com/user-attachments/assets/7b39eef5-a7d5-4243-a590-a6dab0b12af2" width="100%" /> | <img src="https://github.com/user-attachments/assets/7a875ce6-ea40-467a-b732-f473e5f40a02" width="100%" /> |
-> **Note:**  
-You can switch between two solvers, Primal-dual LQR of GPU-FDDP. Just change the flang in the config `solver_mode = "fddp" or "primal_dual`. 
+| Acrobot Swing-Up | Quadruped Trot | Humanoid Jump | Quadruped Barrel Roll | Obstacle Avoidance |
+|---|---|---|---|---|
+| <img src="https://github.com/user-attachments/assets/af15576c-8fab-4e53-ac06-8f9e648703f6" width="100%" /> | <img src="https://github.com/user-attachments/assets/51f7eb3e-b344-4a92-9b16-837ca5dc71c6" width="100%" /> | <img src="https://github.com/user-attachments/assets/7b39eef5-a7d5-4243-a590-a6dab0b12af2" width="100%" /> | <img src="https://github.com/user-attachments/assets/7a875ce6-ea40-467a-b732-f473e5f40a02" width="100%" /> |<img width="100%" alt="obstacle_avoidance" src="https://github.com/user-attachments/assets/fbc6f156-c549-4353-a8c6-4ba43675aac5" />
+
+## Available solvers
+
+| Solver | Multiple shooting | Dynamics | Integrator | Stage Equality | Inequality constraints |
+|---|---|---|---|---|---|
+| `primal-dual` | ✔️ | Forward | Semi-implicit | ❎ | ❎ (Soft Cost barrier) |
+| `fddp` | ✔️ (dynamics defects) | Forward | Semi-implicit | ❎ | ❎ (Soft Cost barrier) |
+| `eq_primal_dual` | ✔️ | Forwward or Inverse | Explicit or  Implicit | ✔️ | ❎ (Soft Cost barrier) |
+| `eq_fddp` | ✔️ (dynamics defects) | Forwward or Inverse | Explicit or  Implicit | ✔️ | ❎ (Soft Cost barrier) |
+| `ip_primal_dual` | ✔️ | Forwward or Inverse | Explicit or  Implicit | ✔️ | ✔️ (interior point) |
+
 ## Installation
+
+### Prerequisites
+- Install [Pixi](https://pixi.prefix.dev/latest/) - a fast conda package manager
 
 ### Clone the repo
 ```
@@ -49,26 +61,38 @@ git clone git@github.com:iit-DLSLab/mpx.git
 cd mpx && git submodule update --init --recursive
 ```
 
-### Set Up Conda Environment
-Create and activate the conda environment:
-```
-conda create -n mpx_env python=3.13 -y
-conda activate mpx_env
+### Set Up Environment with Pixi
+Pixi will automatically manage your environment with all dependencies including ROS 2 Humble, JAX, and build tools:
+
+```bash
+# Initialize the Pixi environment
+pixi install
+
+# Activate the environment
+pixi shell
 ```
 
-### Install with pip 
-from the repo main folder
-```
+### Alternative: Traditional Conda Setup (Deprecated)
+For reference, the legacy conda setup is:
+```bash
+conda create -n mpx_env python=3.13 -y
+conda activate mpx_env
 pip install -e .
 ```
 
 
 ## RUN example
-```
-conda activate mpx_env
+```bash
+# Using Pixi
+pixi run python mpx/examples/mjx_quad.py
+
+# Or activate the environment first
+pixi shell
 python mpx/examples/mjx_quad.py
-## Use the keyboard's arrows to control the robot ##
 ```
+
+Use the keyboard's arrows to control the robot.
+
 
 > **Note:**  
 The first time running the script it can take more than a minute to JIT the solver

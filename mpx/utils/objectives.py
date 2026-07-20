@@ -4,13 +4,15 @@ from mujoco import mjx
 from mujoco.mjx._src import math
 from functools import partial
 
-def penalty(constraint,alpha = 0.1,sigma = 5):
-        def safe_log(x):
-            x = jnp.clip(x,1e-10,1e6)
-            return jnp.log(x)
-        quadratic_barrier = alpha/2*(jnp.square((constraint-2*sigma)/sigma)-jnp.ones_like(constraint))
-        log_barrier = -alpha*safe_log(constraint)
-        return jnp.clip(jnp.where(constraint>sigma,log_barrier,quadratic_barrier+log_barrier),0,1e8)
+def penalty(constraint, alpha=0.1, sigma=5):
+    """Relaxed log barrier with a C2 quadratic continuation below ``sigma``."""
+    log_barrier = -alpha * jnp.log(jnp.maximum(constraint, sigma))
+    quadratic_barrier = (
+        0.5 * alpha * jnp.square((constraint - 2.0 * sigma) / sigma)
+        - 0.5 * alpha
+        - alpha * jnp.log(sigma)
+    )
+    return jnp.where(constraint > sigma, log_barrier, quadratic_barrier)
 
 def quadruped_srbd_obj(n_contact,N,W,reference,x, u, t):
 

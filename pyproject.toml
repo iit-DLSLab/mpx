@@ -24,3 +24,37 @@ Homepage = "https://github.com/iit-DLSLab/mpx"
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+[tool.pixi.workspace]
+channels = ["conda-forge", "nvidia", "https://prefix.dev/robostack-humble"]
+platforms = ["linux-64"]
+
+[tool.pixi.dependencies]
+python = ">=3.10"
+jax = "*"
+mujoco = "*"
+mujoco-mjx = "*"
+ros-humble-desktop = "*"
+ros-humble-rmw-cyclonedds-cpp = "*"
+ros-humble-rosidl-generator-dds-idl = "*"
+ros-humble-plotjuggler-ros = "*"
+cmake = "*"
+make = "*"
+ninja = "*"
+colcon-common-extensions = "*"
+catkin_tools = "*"
+rosdep = "*"
+compilers = "*"
+jaxlib = { version = "*", build = "*cuda*" }
+"cuda-nvcc" = "*"
+
+[tool.pixi.system-requirements]
+cuda = "12"
+
+[tool.pixi.pypi-dependencies]
+trajax = { git = "https://github.com/google/trajax" }
+mpx = { path = ".", editable = true }
+readchar = "*"
+
+[tool.pixi.environments]
+default = { solve-group = "default" }

@@ -45,7 +45,8 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0
     # dq = x[13+n_joints:13+2*n_joints]
     yaw = jnp.arctan2(2*(quat[0]*quat[3] + quat[1]*quat[2]), 1 - 2*(quat[2]*quat[2] + quat[3]*quat[3]))
     Ryaw = jnp.array([[jnp.cos(yaw), -jnp.sin(yaw), 0],[jnp.sin(yaw), jnp.cos(yaw), 0],[0, 0, 1]])
-    proprio_height = input[6] + jnp.sum(liftoff[2::3])/n_contact
+    terrain_height = jnp.where(use_terrain_estimator, jnp.sum(liftoff[2::3]) / n_contact, 0.0)
+    proprio_height = input[6] + terrain_height
     p = jnp.array([p[0], p[1], proprio_height])
     if use_terrain_estimator:
         quat_ref = jnp.tile(terrain_orientation(liftoff,Ryaw), (N+1, 1))
@@ -153,7 +154,8 @@ def reference_generator_srbd(use_terrain_estimator,N,dt,n_contact,mass,foot0,t_t
     dp = x[7:10]
     yaw = jnp.arctan2(2*(quat[0]*quat[3] + quat[1]*quat[2]), 1 - 2*(quat[2]*quat[2] + quat[3]*quat[3]))
     Ryaw = jnp.array([[jnp.cos(yaw), -jnp.sin(yaw), 0],[jnp.sin(yaw), jnp.cos(yaw), 0],[0, 0, 1]])
-    proprio_height = input[6] + jnp.sum(liftoff[2::3])/n_contact
+    terrain_height = jnp.where(use_terrain_estimator, jnp.sum(liftoff[2::3]) / n_contact, 0.0)
+    proprio_height = input[6] + terrain_height
     p = jnp.array([p[0], p[1], proprio_height])
     if use_terrain_estimator:
         quat_ref = jnp.tile(terrain_orientation(liftoff,Ryaw), (N+1, 1))
