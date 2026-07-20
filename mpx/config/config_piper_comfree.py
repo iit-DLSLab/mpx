@@ -23,7 +23,6 @@ from mpx.jax_ocp_solvers.jax_ocp_solvers import optimizers
 
 model_path = str(Path(__file__).resolve().parents[1] / "data" / "piper_l" / "scene_cube.xml")
 contact_frame = ["end_effector"]
-body_name = ["link6"]
 
 model = mujoco.MjModel.from_xml_path(model_path)
 model.opt.timestep = 0.005
@@ -33,7 +32,6 @@ mjx_model = mjx.put_model(model)
 
 nq = model.nq
 nv = model.nv
-nu = model.nu
 nx = nq + nv
 
 arm_dof = 6
@@ -42,23 +40,33 @@ n = nx
 box_qpos_adr = 6
 box_dof_adr = 6
 equality_dim = nv
+inequality_dim = 2 * arm_dof + 2
 
 ee_geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, contact_frame[0])
 box_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "box_body")
 box_geom_id = int(model.body_geomadr[box_body_id])
+floor_geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "floor")
 
 ee_radius = float(model.geom_size[ee_geom_id, 0])
 box_half_size = jnp.asarray(model.geom_size[box_geom_id, :3])
+box_corner_signs = jnp.asarray(
+    [
+        [sx, sy, sz]
+        for sx in (-1.0, 1.0)
+        for sy in (-1.0, 1.0)
+        for sz in (-1.0, 1.0)
+    ]
+)
+friction_direction_count = 4
 
-dt = 0.02
+dt = 0.01
 forward_dt = 0.005
 N = 20
-mpc_frequency = 50
-sim_steps = max(1, round(1.0 / (mpc_frequency * model.opt.timestep)))
+mpc_frequency = 100
 equality_num_alpha = 10
-solver_iterations = 1
 regularization = jnp.array(1e-3)
-merit_penalty = jnp.array(1e-2)
+barrier_parameter = jnp.array(1e-4, dtype=jnp.float32)
+multiplier_regularization = jnp.array(1e-8, dtype=jnp.float32)
 box_sdf_smoothing = 0.005
 
 # u = [v_next, tau_arm].  v_next makes the full dynamics an implicit equality.
@@ -73,8 +81,6 @@ torque_limit = jnp.minimum(
 )
 
 initial_box_x = 0.2342375717
-goal_default = jnp.array([initial_box_x, -0.4])
-object_goal = goal_default
 
 
 def _initial_configuration():
@@ -98,7 +104,6 @@ def _initial_configuration():
 
 
 q0 = jnp.asarray(_initial_configuration())
-q0_init = q0
 mujoco.mj_resetData(model, data)
 data.qpos[:] = q0
 mujoco.mj_forward(model, data)
@@ -106,7 +111,24 @@ mujoco.mj_forward(model, data)
 x0 = jnp.concatenate((jnp.asarray(q0), jnp.zeros(nv)))
 initial_state = x0
 arm_nominal = jnp.asarray(q0[:arm_dof])
-W = {"scale": jnp.array(1.0)}
+W = {
+    "Qgoal": jnp.eye(2) * 50.0,
+    "Qq": jnp.eye(arm_dof) * 0.05,
+    "Qv": jnp.eye(nv) * 0.1,
+    "Qacc": jnp.eye(nv) * 1e-4,
+    "Qtau": jnp.eye(arm_dof) * 1e-3,
+    "Qside": jnp.array(20.0),
+    "Qgoal_final": jnp.eye(2) * 1000.0,
+    "Qcontact_final": jnp.eye(3) * 200.0,
+    "Qq_final": jnp.eye(arm_dof) * 0.1,
+    "Qv_final": jnp.eye(nv) * 0.1,
+}
+
+if not model.jnt_limited[:arm_dof].all():
+    raise ValueError("All controlled Piper joints must define position limits")
+joint_position_min = jnp.asarray(model.jnt_range[:arm_dof, 0])
+joint_position_max = jnp.asarray(model.jnt_range[:arm_dof, 1])
+base_exclusion_radius = 0.2
 
 
 # ------------------------ Differentiable box distance --------------------- #
@@ -162,6 +184,11 @@ def _box_distance_and_normal(point, center, rotation):
     return phi, normal
 
 
+def _box_corner_positions(center, rotation):
+    local_corners = box_corner_signs * box_half_size
+    return center + local_corners @ rotation.T
+
+
 def _tangent_directions(normal):
     """Return four unit directions spanning the plane normal to ``normal``."""
     sign = jnp.where(normal[2] >= 0.0, 1.0, -1.0)
@@ -178,7 +205,7 @@ def _friction_pyramid(relative_jacobian, normal, phi, friction):
     tangents = _tangent_directions(normal)
     force_directions = normal[None, :] - friction * tangents
     rows = force_directions @ relative_jacobian.T
-    return rows, jnp.full(4, phi), force_directions
+    return rows, jnp.full(friction_direction_count, phi), force_directions
 
 
 def _contact_kinematics(mjx_data):
@@ -203,18 +230,21 @@ def _contact_kinematics(mjx_data):
         ee_jacobian - box_jacobian, box_normal, arm_phi, friction=0.7
     )
 
+    floor_position = mjx_data.geom_xpos[floor_geom_id]
+    floor_rotation = mjx_data.geom_xmat[floor_geom_id].reshape(3, 3)
+    floor_normal = floor_rotation[:, 2]
     floor_rows = []
     floor_phis = []
     floor_directions = []
-    floor_normal = jnp.array([0.0, 0.0, 1.0])
-    for sx, sy in ((-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)):
-        local_corner = box_half_size * jnp.array([sx, sy, -1.0])
-        corner = box_center + box_rotation @ local_corner
+    for corner in _box_corner_positions(box_center, box_rotation):
         corner_jacobian, _ = mjx.jac(
             mjx_model, mjx_data, corner, box_body_id
         )
         rows, phis, directions = _friction_pyramid(
-            corner_jacobian, floor_normal, corner[2], friction=0.5
+            corner_jacobian,
+            floor_normal,
+            jnp.dot(corner - floor_position, floor_normal),
+            friction=0.5,
         )
         floor_rows.append(rows)
         floor_phis.append(phis)
@@ -225,8 +255,19 @@ def _contact_kinematics(mjx_data):
     contact_directions = jnp.concatenate(
         (arm_directions, *floor_directions), axis=0
     )
-    stiffness = jnp.concatenate((jnp.full(4, 35.0), jnp.full(16, 5.0)))
-    damping = jnp.concatenate((jnp.full(4, 0.8), jnp.full(16, 0.08)))
+    floor_direction_count = friction_direction_count * len(box_corner_signs)
+    stiffness = jnp.concatenate(
+        (
+            jnp.full(friction_direction_count, 35.0),
+            jnp.full(floor_direction_count, 5.0),
+        )
+    )
+    damping = jnp.concatenate(
+        (
+            jnp.full(friction_direction_count, 0.8),
+            jnp.full(floor_direction_count, 0.08),
+        )
+    )
     return contact_rows, contact_phis, contact_directions, stiffness, damping
 
 
@@ -240,7 +281,14 @@ def _contact_force_terms(mjx_data, velocity, integration_dt=None):
     predicted_gap = phi
     if integration_dt is not None:
         predicted_gap = predicted_gap + integration_dt * contact_velocity
-    sharpness = jnp.concatenate((jnp.full(4, 100.0), jnp.full(16, 20.0)))
+    sharpness = jnp.concatenate(
+        (
+            jnp.full(friction_direction_count, 100.0),
+            jnp.full(
+                friction_direction_count * len(box_corner_signs), 20.0
+            ),
+        )
+    )
     beta = _smooth_positive(
         -stiffness * predicted_gap - damping * contact_velocity, sharpness
     )
@@ -272,24 +320,19 @@ def _contact_force_info_from_terms(state_data, phi, directions, beta):
     box_rotation = state_data.geom_xmat[box_geom_id].reshape(3, 3)
     arm_normal = _box_distance_and_normal(ee_center, box_center, box_rotation)[1]
     arm_contact_position = ee_center - ee_radius * arm_normal
-    ground_contact_positions = jnp.stack(
-        [
-            box_center
-            + box_rotation
-            @ (box_half_size * jnp.array([sx, sy, -1.0]))
-            for sx, sy in (
-                (-1.0, -1.0),
-                (-1.0, 1.0),
-                (1.0, -1.0),
-                (1.0, 1.0),
-            )
-        ]
-    )
+    ground_contact_positions = _box_corner_positions(box_center, box_rotation)
     arm_force_on_box = -jnp.sum(
-        beta[:4, None] * directions[:4], axis=0
+        beta[:friction_direction_count, None]
+        * directions[:friction_direction_count],
+        axis=0,
     )
     ground_corner_forces = jnp.sum(
-        beta[4:].reshape(4, 4, 1) * directions[4:].reshape(4, 4, 3),
+        beta[friction_direction_count:].reshape(
+            len(box_corner_signs), friction_direction_count, 1
+        )
+        * directions[friction_direction_count:].reshape(
+            len(box_corner_signs), friction_direction_count, 3
+        ),
         axis=1,
     )
     return ContactForceInfo(
@@ -299,16 +342,11 @@ def _contact_force_info_from_terms(state_data, phi, directions, beta):
         arm_contact_position=arm_contact_position,
         ground_contact_positions=ground_contact_positions,
         arm_gap=phi[0],
-        ground_gaps=phi[4::4],
+        ground_gaps=phi[
+            friction_direction_count::friction_direction_count
+        ],
         beta=beta,
     )
-
-
-def contact_force_info(q, velocity):
-    """Return Cartesian forces and gaps from the smooth contact model."""
-    state_data = _state_data(q, velocity)
-    _, phi, directions, beta = _contact_force_terms(state_data, velocity)
-    return _contact_force_info_from_terms(state_data, phi, directions, beta)
 
 
 # ---------------------------- OCP transcription --------------------------- #
@@ -375,6 +413,29 @@ def equality(state, control, t, parameter):
     )
 
 
+def inequality(state, control, t, parameter):
+    """State limits on each stage successor, including the terminal state."""
+    next_state = dynamics(state, control, t, parameter)
+    q, velocity = _split_state(next_state)
+    robot_q = q[:arm_dof]
+    state_data = smooth.kinematics(
+        mjx_model,
+        mjx.make_data(mjx_model).replace(qpos=q, qvel=velocity),
+    )
+    box_position = state_data.geom_xpos[box_geom_id]
+    end_effector_position = state_data.geom_xpos[ee_geom_id]
+    return jnp.concatenate(
+        (
+            jnp.array(
+                [
+                    base_exclusion_radius**2
+                    - jnp.dot(box_position[:2], box_position[:2]),
+                ]
+            ),
+        )
+    )
+
+
 class ForwardDynamicsInfo(PyTreeNode):
     acceleration: jnp.ndarray
     momentum_residual: jnp.ndarray
@@ -431,26 +492,21 @@ def forward_dynamics(state, torque):
     return next_state, info
 
 
-def _task_geometry(state):
+def _task_positions(state):
     q, v = _split_state(state)
     state_data = smooth.kinematics(
         mjx_model, mjx.make_data(mjx_model).replace(qpos=q, qvel=v)
     )
     ee_position = state_data.geom_xpos[ee_geom_id]
     box_position = state_data.geom_xpos[box_geom_id]
-    box_rotation = state_data.geom_xmat[box_geom_id].reshape(3, 3)
-    box_distance, _ = _box_distance_and_normal(
-        ee_position, box_position, box_rotation
-    )
-    return ee_position, box_position, box_distance - ee_radius
+    return ee_position, box_position
 
 
 def cost(weights, reference, state, control, t):
-    del weights
     q, velocity = _split_state(state)
     velocity_next = control[vnext_slice]
     torque = control[tau_slice]
-    ee_position, box_position, _ = _task_geometry(state)
+    ee_position, box_position = _task_positions(state)
     goal = reference["goal"][t]
 
     goal_error = box_position[:2] - goal
@@ -462,18 +518,18 @@ def cost(weights, reference, state, control, t):
     side_projection = jnp.dot(ee_position[:2] - box_position[:2], goal_direction)
 
     stage_cost = (
-        50.0 * jnp.dot(goal_error, goal_error)
-        + 0.05 * jnp.dot(posture_error, posture_error)
-        + 0.1 * jnp.dot(velocity, velocity)
-        + 1e-4 * jnp.dot(acceleration, acceleration)
-        + 1e-3 * jnp.dot(torque, torque)
-        + 20*jax.nn.relu(side_projection + 0.025) ** 2
+        goal_error.T @ weights["Qgoal"] @ goal_error
+        + posture_error.T @ weights["Qq"] @ posture_error
+        + velocity.T @ weights["Qv"] @ velocity
+        + acceleration.T @ weights["Qacc"] @ acceleration
+        + torque.T @ weights["Qtau"] @ torque
+        + weights["Qside"] * jax.nn.relu(side_projection + 0.025) ** 2
     )
     terminal_cost = (
-        1000.0 * jnp.dot(goal_error, goal_error)
-        + 200.0 * jnp.dot(contact_error, contact_error)
-        + 0.1 * jnp.dot(posture_error, posture_error)
-        + 0.1 * jnp.dot(velocity, velocity)
+        goal_error.T @ weights["Qgoal_final"] @ goal_error
+        + contact_error.T @ weights["Qcontact_final"] @ contact_error
+        + posture_error.T @ weights["Qq_final"] @ posture_error
+        + velocity.T @ weights["Qv_final"] @ velocity
     )
     return jnp.where(t == N, terminal_cost, stage_cost)
 
@@ -492,27 +548,28 @@ class ComFreeMPCData(PyTreeNode):
     U0: jnp.ndarray
     V0: jnp.ndarray
     Veq0: jnp.ndarray
+    Vineq0: jnp.ndarray
+    slack0: jnp.ndarray
     W: dict
     regularization: jnp.ndarray
-    merit_penalty: jnp.ndarray
+    barrier_parameter: jnp.ndarray
 
 
 @partial(jax.jit, static_argnums=(0, 1))
 def _update_warm_start(
     horizon,
     shift,
-    u_reference,
     state,
     X_previous,
-    U_previous,
     X,
     U,
     V,
     Veq,
+    Vineq,
+    slack,
+    current_barrier_parameter,
     accepted,
 ):
-    del u_reference, U_previous
-
     def shift_trajectory(trajectory):
         tail = jnp.repeat(trajectory[-1:], shift, axis=0)
         return jnp.concatenate((trajectory[shift:], tail), axis=0)
@@ -523,6 +580,8 @@ def _update_warm_start(
             shift_trajectory(X),
             shift_trajectory(V),
             shift_trajectory(Veq),
+            shift_trajectory(Vineq),
+            shift_trajectory(slack),
             X[1, :arm_dof],
             X[1, nq : nq + arm_dof],
         )
@@ -541,43 +600,68 @@ def _update_warm_start(
             holding_torque / torque_limit
         )
         reset_control = jnp.concatenate((velocity, holding_command))
+        reset_X = jnp.tile(state, (horizon + 1, 1))
+        reset_U = jnp.tile(reset_control, (horizon, 1))
+        reset_g = jax.vmap(inequality)(
+            reset_X[:-1],
+            reset_U,
+            jnp.arange(horizon),
+            jnp.zeros((horizon, 1), dtype=state.dtype),
+        )
+        reset_slack = jnp.maximum(-reset_g, 1e-2)
         return (
-            jnp.tile(reset_control, (horizon, 1)),
-            jnp.tile(state, (horizon + 1, 1)),
+            reset_U,
+            reset_X,
             jnp.zeros_like(X_previous),
             jnp.zeros((horizon, equality_dim), dtype=state.dtype),
+            current_barrier_parameter / reset_slack,
+            reset_slack,
             X_previous[1, :arm_dof],
             X_previous[1, nq : nq + arm_dof],
         )
 
-    valid_update = jnp.isfinite(U).all() & accepted
+    valid_update = (
+        jnp.isfinite(U).all()
+        & jnp.isfinite(Vineq).all()
+        & jnp.isfinite(slack).all()
+        & (Vineq > 0.0).all()
+        & (slack > 0.0).all()
+        & accepted
+    )
     return jax.lax.cond(valid_update, safe_update, unsafe_update)
 
 
 class MPCWrapper:
     def __init__(self, config, limited_memory=False):
-        self.config = config
         self.mpc_frequency = config.mpc_frequency
         self.shift = max(1, int(1 / (config.dt * config.mpc_frequency)))
         self.qpos_slice = slice(0, nq)
         self.qvel_slice = slice(nq, nq + nv)
         self.model = mujoco.MjModel.from_xml_path(config.model_path)
         self.model.opt.timestep = config.dt
-        self.mjx_model = mjx.put_model(self.model)
 
         self.initial_state = jnp.asarray(config.initial_state)
         self.initial_X0 = jnp.tile(self.initial_state, (config.N + 1, 1))
         self.initial_U0 = jnp.tile(config.u_ref, (config.N, 1))
         self.initial_V0 = jnp.zeros((config.N + 1, config.n))
         self.initial_Veq0 = jnp.zeros((config.N, config.equality_dim))
+        initial_g = jax.vmap(config.inequality)(
+            self.initial_X0[:-1],
+            self.initial_U0,
+            jnp.arange(config.N),
+            jnp.zeros((config.N, 1)),
+        )
+        self.initial_slack0 = jnp.maximum(-initial_g, 1e-2)
+        self.initial_Vineq0 = config.barrier_parameter / self.initial_slack0
 
         solver = partial(
-            optimizers.mpc_equality,
+            optimizers.ip_mpc,
             config.cost,
             config.dynamics,
             None,
             limited_memory,
             equality=config.equality,
+            inequality=config.inequality,
             num_alpha=config.equality_num_alpha,
         )
 
@@ -590,40 +674,30 @@ class MPCWrapper:
             U0,
             V0,
             Veq0,
+            Vineq0,
+            slack0,
             current_regularization,
+            current_barrier_parameter,
         ):
-            initial_values = (
+            return solver(
+                reference,
+                parameter,
+                weights,
+                state,
                 X0,
                 U0,
                 V0,
-                Veq0,
-                current_regularization,
-                jnp.array(0.0, dtype=state.dtype),
-                jnp.array(False),
-            )
-
-            def solver_iteration(_, values):
-                X, U, V, Veq, reg, _, accepted_before = values
-                result = solver(
-                    reference,
-                    parameter,
-                    weights,
-                    state,
-                    X,
-                    U,
-                    V,
-                    Veq_in=Veq,
-                    regularization=reg,
-                )
-                return (*result[:-1], accepted_before | result[-1])
-
-            return jax.lax.fori_loop(
-                0, config.solver_iterations, solver_iteration, initial_values
+                Veq_in=Veq0,
+                Vineq_in=Vineq0,
+                slack_in=slack0,
+                regularization=current_regularization,
+                barrier_parameter=current_barrier_parameter,
+                multiplier_regularization=config.multiplier_regularization,
             )
 
         self._solve = solve
         self._update_warm_start = partial(
-            _update_warm_start, config.N, self.shift, config.u_ref
+            _update_warm_start, config.N, self.shift
         )
 
     def make_data(self):
@@ -633,9 +707,11 @@ class MPCWrapper:
             U0=self.initial_U0,
             V0=self.initial_V0,
             Veq0=self.initial_Veq0,
+            Vineq0=self.initial_Vineq0,
+            slack0=self.initial_slack0,
             W=W,
             regularization=regularization,
-            merit_penalty=merit_penalty,
+            barrier_parameter=barrier_parameter,
         )
 
     def _reference(self, command):
@@ -659,7 +735,26 @@ class MPCWrapper:
         del contact
         reference = self._reference(command)
         parameter = jnp.zeros((N + 1, 1), dtype=state.dtype)
-        X, U, V, Veq, reg, alpha_best, accepted = self._solve(
+        nominal_g = jax.vmap(inequality)(
+            mpc_data.X0[:-1],
+            mpc_data.U0,
+            jnp.arange(N),
+            jnp.zeros((N, 1), dtype=state.dtype),
+        )
+        slack_in = jnp.maximum(-nominal_g, 1e-2)
+        vineq_in = barrier_parameter / slack_in
+        (
+            X,
+            U,
+            V,
+            Veq,
+            Vineq,
+            slack,
+            reg,
+            _,
+            alpha_best,
+            accepted,
+        ) = self._solve(
             reference,
             parameter,
             mpc_data.W,
@@ -668,23 +763,45 @@ class MPCWrapper:
             mpc_data.U0,
             mpc_data.V0,
             mpc_data.Veq0,
+            vineq_in,
+            slack_in,
             mpc_data.regularization,
+            barrier_parameter,
         )
-        valid_update = jnp.isfinite(U).all() & accepted
+        valid_update = (
+            jnp.isfinite(U).all()
+            & jnp.isfinite(Vineq).all()
+            & jnp.isfinite(slack).all()
+            & (Vineq > 0.0).all()
+            & (slack > 0.0).all()
+            & accepted
+        )
         tau = jax.lax.cond(
             valid_update,
             lambda: self.control_output(U),
             lambda: self.fallback_output(state),
         )
-        U0, X0, V0, Veq0, q, dq = self._update_warm_start(
-            state, mpc_data.X0, mpc_data.U0, X, U, V, Veq, accepted
+        U0, X0, V0, Veq0, Vineq0, slack0, q, dq = self._update_warm_start(
+            state,
+            mpc_data.X0,
+            X,
+            U,
+            V,
+            Veq,
+            Vineq,
+            slack,
+            barrier_parameter,
+            accepted,
         )
         next_data = mpc_data.replace(
             X0=X0,
             U0=U0,
             V0=V0,
             Veq0=Veq0,
+            Vineq0=Vineq0,
+            slack0=slack0,
             regularization=jnp.where(valid_update, reg, regularization),
+            barrier_parameter=barrier_parameter,
         )
         return next_data, tau, q, dq, alpha_best, accepted
 
@@ -699,13 +816,24 @@ class MPCWrapper:
             .set(qvel)
         )
         reset_control = u_ref.at[vnext_slice].set(qvel)
+        X0 = jnp.tile(state, (N + 1, 1))
+        U0 = jnp.tile(reset_control, (N, 1))
+        reset_g = jax.vmap(inequality)(
+            X0[:-1],
+            U0,
+            jnp.arange(N),
+            jnp.zeros((N, 1), dtype=state.dtype),
+        )
+        slack0 = jnp.maximum(-reset_g, 1e-2)
         return mpc_data.replace(
-            X0=jnp.tile(state, (N + 1, 1)),
-            U0=jnp.tile(reset_control, (N, 1)),
+            X0=X0,
+            U0=U0,
             V0=self.initial_V0,
             Veq0=self.initial_Veq0,
+            Vineq0=barrier_parameter / slack0,
+            slack0=slack0,
             regularization=regularization,
-            merit_penalty=merit_penalty,
+            barrier_parameter=barrier_parameter,
         )
 
 
