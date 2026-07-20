@@ -38,17 +38,17 @@ The solver is wrapped by the `MPCControllerWrapper` class, and all the settings 
 ## Task examples
 | Acrobot Swing-Up | Quadruped Trot | Humanoid Jump | Quadruped Barrel Roll | Obstacle Avoidance |
 |---|---|---|---|---|
-| <img src="https://github.com/user-attachments/assets/af15576c-8fab-4e53-ac06-8f9e648703f6" width="100%" /> | <img src="https://github.com/user-attachments/assets/51f7eb3e-b344-4a92-9b16-837ca5dc71c6" width="100%" /> | <img src="https://github.com/user-attachments/assets/7b39eef5-a7d5-4243-a590-a6dab0b12af2" width="100%" /> | <img src="https://github.com/user-attachments/assets/7a875ce6-ea40-467a-b732-f473e5f40a02" width="100%" /> | GIF coming soon |
+| <img src="https://github.com/user-attachments/assets/af15576c-8fab-4e53-ac06-8f9e648703f6" width="100%" /> | <img src="https://github.com/user-attachments/assets/51f7eb3e-b344-4a92-9b16-837ca5dc71c6" width="100%" /> | <img src="https://github.com/user-attachments/assets/7b39eef5-a7d5-4243-a590-a6dab0b12af2" width="100%" /> | <img src="https://github.com/user-attachments/assets/7a875ce6-ea40-467a-b732-f473e5f40a02" width="100%" /> |<img width="100%" alt="obstacle_avoidance" src="https://github.com/user-attachments/assets/fbc6f156-c549-4353-a8c6-4ba43675aac5" />
 
 ## Available solvers
 
-| Solver | Multiple shooting | Dynamics | Integrator | Inequality constraints |
-|---|---|---|---|---|
-| `primal-dual` | Yes | Forward | Semi-implicit | Cost barrier |
-| `fddp` | Yes (dynamics defects) | Forward | Semi-implicit | Cost barrier |
-| `eq_primal_dual` | Yes | Inverse | Implicit | Cost barrier |
-| `eq_fddp` | Yes (dynamics defects) | Inverse | Implicit | Cost barrier |
-| `ip_primal_dual` | Yes | Inverse | Implicit | Yes (interior point) |
+| Solver | Multiple shooting | Dynamics | Integrator | Stage Equality | Inequality constraints |
+|---|---|---|---|---|---|
+| `primal-dual` | ✔️ | Forward | Semi-implicit | ❎ | ❎ (Soft Cost barrier) |
+| `fddp` | ✔️ (dynamics defects) | Forward | Semi-implicit | ❎ | ❎ (Soft Cost barrier) |
+| `eq_primal_dual` | ✔️ | Forwward or Inverse | Explicit or  Implicit | ✔️ | ❎ (Soft Cost barrier) |
+| `eq_fddp` | ✔️ (dynamics defects) | Forwward or Inverse | Explicit or  Implicit | ✔️ | ❎ (Soft Cost barrier) |
+| `ip_primal_dual` | ✔️ | Forwward or Inverse | Explicit or  Implicit | ✔️ | ✔️ (interior point) |
 
 ## Installation
 
