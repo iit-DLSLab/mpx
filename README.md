@@ -11,7 +11,7 @@ This repo implements the code for legged robot MPC and Trajectory Optimization a
 </p>
 <div align="center">
   <a href="#Installation"><b>Installation</b></a> |
-  <a href="https://arxiv.org/abs/2506.07823"><b>PrePrint</b></a> |
+  <a href="https://arxiv.org/abs/2506.07823"><b>Paper</b></a> |
   <a href="https://youtu.be/zquKLxbAU_Y"><b>Video</b></a> |
   
 </div>
