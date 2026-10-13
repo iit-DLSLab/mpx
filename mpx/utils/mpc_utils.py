@@ -281,6 +281,8 @@ def reference_generator_dfcip_online(
     dt: float,
     m: float,
     grav: float,
+    h_min: float,
+    h_max: float,
     x0: jax.Array,
     cmd: jax.Array,
 ):
@@ -300,7 +302,7 @@ def reference_generator_dfcip_online(
 
     v_des = cmd[0]
     omega_des = cmd[2]
-    z_com_ref = cmd[3]
+    z_com_ref = jnp.clip(cmd[3], h_min, h_max)
 
     def move_towards(current, target, max_delta):
         delta = target - current
@@ -542,7 +544,7 @@ def whole_body_interface_wheeled_legged_qp(
     Kp_regulation, Kd_regulation,
     w_posture,
     # ── task weights ──────────────────────────────────────────────────────
-    w_qddot, w_com, w_lwheel, w_rwheel, w_base,
+    w_qddot, w_force, w_com, w_lwheel, w_rwheel, w_base,
     mu_,
     # ── runtime ───────────────────────────────────────────────────────────
     qpos, qvel, desired,
@@ -642,40 +644,30 @@ def whole_body_interface_wheeled_legged_qp(
     dqz = 0.5 * ( q_wxyz[0]*omega[2] + q_wxyz[1]*omega[1] - q_wxyz[2]*omega[0])
     dqpos = jnp.concatenate([qvel[:3], jnp.array([dqw, dqx, dqy, dqz]), qvel[6:]])
  
-    def _jac_geom(qpos_, geom_id, bid):
+    def _jacobians(qpos_):
         d_ = mjx.make_data(mjx_model).replace(qpos=qpos_, qvel=qvel)
         d_ = mjx.fwd_position(mjx_model, d_)
-        Jp_, Jr_ = mjx.jac(mjx_model, d_, d_.geom_xpos[geom_id], bid)
-        return Jp_.T, Jr_.T   # (3, nv), (3, nv)
- 
-    def _jac_body(qpos_, bid):
-        d_ = mjx.make_data(mjx_model).replace(qpos=qpos_, qvel=qvel)
-        d_ = mjx.fwd_position(mjx_model, d_)
-        Jp_, Jr_ = mjx.jac(mjx_model, d_, d_.xpos[bid], bid)
-        return Jp_.T, Jr_.T
- 
-    def _jac_com(qpos_):
-        d_ = mjx.make_data(mjx_model).replace(qpos=qpos_, qvel=qvel)
-        d_ = mjx.fwd_position(mjx_model, d_)
+
+        def _jac_geom(geom_id, bid):
+            Jp_, Jr_ = mjx.jac(mjx_model, d_, d_.geom_xpos[geom_id], bid)
+            return Jp_.T, Jr_.T   # (3, nv), (3, nv)
+
         total_mass = jnp.sum(mjx_model.body_mass)
         nb = mjx_model.body_mass.shape[0]
         def _acc(i, J):
             Jp_i, _ = mjx.jac(mjx_model, d_, d_.xipos[i], i)
             return J + mjx_model.body_mass[i] * Jp_i.T
-        return jax.lax.fori_loop(1, nb, _acc, jnp.zeros((3, nv))) / total_mass
-    
+        J_com_ = jax.lax.fori_loop(1, nb, _acc, jnp.zeros((3, nv))) / total_mass
+
+        _, J_base_rot_ = mjx.jac(mjx_model, d_, d_.xpos[base_body_id], base_body_id)
+        return (_jac_geom(contact_id[0], body_id[0]), _jac_geom(contact_id[1], body_id[1]),
+                J_base_rot_.T, J_com_)
 
     # Frame Jacobians and their time derivatives (Jdot) via forward-mode AD.
-    (J_left_wheel_lin,  J_left_wheel_rot), \
-    (J_left_wheel_dot_lin,  J_left_wheel_dot_rot) = jax.jvp(
-        lambda qp: _jac_geom(qp, contact_id[0], body_id[0]), (qpos,), (dqpos,))
-    (J_right_wheel_lin, J_right_wheel_rot), \
-    (J_right_wheel_dot_lin, J_right_wheel_dot_rot) = jax.jvp(
-        lambda qp: _jac_geom(qp, contact_id[1], body_id[1]), (qpos,), (dqpos,))
-    (_, J_base_link_rot), \
-    (_, J_base_link_dot_rot) = jax.jvp(
-        lambda qp: _jac_body(qp, base_body_id), (qpos,), (dqpos,))
-    J_com, J_com_dot = jax.jvp(_jac_com, (qpos,), (dqpos,))
+    ((J_left_wheel_lin,  J_left_wheel_rot), (J_right_wheel_lin, J_right_wheel_rot),
+     J_base_link_rot, J_com), \
+    ((J_left_wheel_dot_lin,  J_left_wheel_dot_rot), (J_right_wheel_dot_lin, J_right_wheel_dot_rot),
+     J_base_link_dot_rot, J_com_dot) = jax.jvp(_jacobians, (qpos,), (dqpos,))
  
     J_left_wheel_  = jnp.vstack([J_left_wheel_lin,  J_left_wheel_rot])   # (6, nv)
     J_right_wheel_ = jnp.vstack([J_right_wheel_lin, J_right_wheel_rot])  # (6, nv)
@@ -769,7 +761,7 @@ def whole_body_interface_wheeled_legged_qp(
     f_acc = f_acc + w_base    * J_base_link_rot.T   @ (a_base_orientation_drift - a_base_orientation_total)
     f_acc = f_acc - w_posture * (S @ a_jnt_total)
  
-    H_force_one = 1e-9 * jnp.eye(n_f * n_contacts)
+    H_force_one = w_force * jnp.eye(n_f * n_contacts)
     f_force_one = jnp.zeros(n_f * n_contacts)
  
     H = jax.scipy.linalg.block_diag(H_acc, H_force_one, H_force_one)   # (n_var, n_var)
@@ -788,13 +780,15 @@ def whole_body_interface_wheeled_legged_qp(
         [zeros_fb, sample_time            * jnp.eye(nj)],   # velocity rows: dt * qddot_jnt
         [zeros_fb, (sample_time**2 / 2.0) * jnp.eye(nj)],   # position rows: dt^2/2 * qddot_jnt
     ])                                                       # (2*nj, nv)
+    qdd_limit_brake = 50.0  # rad/s^2
+    pos_floor = (sample_time**2 / 2.0) * qdd_limit_brake
     d_min_acc = jnp.concatenate([
         -vel_limit - qdot_jnt,
-        q_jnt_min - q_jnt - sample_time * qdot_jnt,
+        jnp.minimum(q_jnt_min - q_jnt - sample_time * qdot_jnt, pos_floor),
     ])
     d_max_acc = jnp.concatenate([
         vel_limit - qdot_jnt,
-        q_jnt_max - q_jnt - sample_time * qdot_jnt,
+        jnp.maximum(q_jnt_max - q_jnt - sample_time * qdot_jnt, -pos_floor),
     ])
  
     # ══════════════════════════════════════════════════════════════════════

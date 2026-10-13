@@ -25,7 +25,7 @@ wbc_lookahead_dt = 0.0
 
 dt_sim = 1.0 / simulation_frequency
 dt_wbc = 1.0 / whole_body_frequency
-mpc_period_steps = round(simulation_frequency / mpc_frequency)
+mpc_period_steps = simulation_frequency / mpc_frequency
 wbc_period_steps = round(simulation_frequency / whole_body_frequency)
 mpc_shift_nodes = round(1.0 / (mpc_frequency * dt_mpc))
 
@@ -51,11 +51,13 @@ n_joints = len(joints_name)
 n_contact = len(contact_frame)
 nx = 13
 nu = 9
-mass = 27.6898
+mass = 27.68978
 d = 0.567  # leg distance (m)
-inertia = jnp.array([[ 1.1446753452439213,     -0.00002628867924503336, -0.024093265357648108],
-                        [-0.00002628867924503336,  0.5535098529263547,     -0.00002104211459585719],
-                        [-0.024093265357648108,   -0.00002104211459585719,  0.7015150712341189    ]])
+inertia = jnp.array([
+    [1.090008860808705, -2.6318929583168255e-05, -0.029887671948266012],
+    [-2.6318929583168255e-05, 0.4984221717169791, -2.0791225890770537e-05],
+    [-0.029887671948266012, -2.0791225890770537e-05, 0.7010938745906233],
+])
 
 grf_ref = jnp.array(n_contact*[0.0, 0.0, (grav*mass)/2.0])
 u_ref = jnp.concatenate([jnp.array([0.0, 0.0, 0.0]), jnp.array(grf_ref)])
@@ -78,6 +80,7 @@ w_posture = 0.1
 posture_joint_ids = (0, 4)
 
 w_qddot = 1e-12
+w_force = 1e-4
 w_com = 1e0
 w_lwheel = 1e0
 w_rwheel = 1e0
@@ -93,7 +96,7 @@ w_vcz = 0e0      # Ground-projected CoM vertical velocity
 w_theta = 0e0    # Heading
 
 w_v = 1e1        # Ground-projected CoM forward velocity
-w_omega = 5e0    # Angular velocity
+w_omega = 5e1    # Angular velocity
 
 # Control weights for the wheel-related inputs
 w_a = 1e-1       # Linear acceleration

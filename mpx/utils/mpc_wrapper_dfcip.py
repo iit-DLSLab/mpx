@@ -1,4 +1,5 @@
 import jax
+import math
 import jax.numpy as jnp
 from functools import partial
 from flax import struct
@@ -20,7 +21,7 @@ class ControlSol:
 
 @struct.dataclass
 class MPCState:
-    """Tutto lo stato mutabile dell'MPC in un pytree JAX (compatibile con jax.vmap)."""
+    """All mutable MPC state in a JAX pytree (compatible with jax.vmap)."""
     sol        : ControlSol
     X0_shifted : jax.Array
     U0_shifted : jax.Array
@@ -79,7 +80,7 @@ class BatchedMPCControllerWrapper:
         hess     = partial(mpc_objectives.wheeled_dfcip_hessian_gn, config.d, config.N)
         dynamics = partial(mpc_dyn_model.wheeled_dfcip_dynamics, mjx_model, config.mass, config.grav, config.dt_mpc)
         fddp     = partial(optimizers.fddp_mpc, cost, dynamics, hess, False)
-        ref_gen  = partial(mpc_utils.reference_generator_dfcip_online, config.N, config.dt_mpc, config.mass, config.grav)
+        ref_gen  = partial(mpc_utils.reference_generator_dfcip_online, config.N, config.dt_mpc, config.mass, config.grav, config.h_min, config.h_max)
 
         def work(reference, parameter, W, x0, X_init, U_init):
             X_it, U_it, D_it = X_init, U_init, None
@@ -97,7 +98,7 @@ class BatchedMPCControllerWrapper:
                 config.wheel_radius, dt_wbc, n_contacts,
                 config.Kp_motion, config.Kd_motion, config.Kp_wheel, config.Kd_wheel, config.Kp_reg, config.Kd_reg,
                 config.w_posture,
-                config.w_qddot, config.w_com, config.w_lwheel, config.w_rwheel, config.w_base,
+                config.w_qddot, config.w_force, config.w_com, config.w_lwheel, config.w_rwheel, config.w_base,
                 config.mu,
                 qpos, qvel, desired,
                 posture_mask=self._posture_mask,
@@ -302,7 +303,7 @@ class BatchedMPCControllerWrapper:
         lwheel_pos_ref = pos_pl_.at[:, 2].set(pos_pl_[:, 2] + cfg.wheel_radius)
         lwheel_vel_ref = vel_pl_
         lwheel_acc_ref = acc_pl_
-        rwheel_pos_ref = pos_pr_.at[:, 2].set(pos_pl_[:, 2] + cfg.wheel_radius)
+        rwheel_pos_ref = pos_pr_.at[:, 2].set(pos_pr_[:, 2] + cfg.wheel_radius)
         rwheel_vel_ref = vel_pr_
         rwheel_acc_ref = acc_pr_
 
