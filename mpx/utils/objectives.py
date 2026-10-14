@@ -14,6 +14,190 @@ def penalty(constraint, alpha=0.1, sigma=5):
     )
     return jnp.where(constraint > sigma, log_barrier, quadratic_barrier)
 
+def wheeled_dfcip_obj(wheel_offset, N, W, reference, x, u, t):
+    pcom, vcom, c = x[0:3], x[3:6], x[6:9]
+    vc_z, theta, v, w = x[9], x[10], x[11], x[12]
+    a, ac_z, alpha = u[0], u[1], u[2]
+    fl, fr = u[3:6], u[6:9]
+ 
+    x_ref = reference[t, :13]
+    u_ref = reference[t, 13:22]
+ 
+    vector_off = jnp.array([0.0, wheel_offset / 2.0, 0.0])
+    R = jnp.array([
+        [jnp.cos(theta), -jnp.sin(theta), 0.0],
+        [jnp.sin(theta),  jnp.cos(theta), 0.0],
+        [0.0,             0.0,            1.0],
+    ])
+    pl = c + R @ vector_off
+    pr = c - R @ vector_off
+ 
+    h_contact   = vc_z                                                 
+    h_moment    = jnp.cross(pl - pcom, fl) + jnp.cross(pr - pcom, fr) 
+    h_fz        = jnp.minimum(fl[2], 0.0) ** 2 + jnp.minimum(fr[2], 0.0) ** 2  
+    h_stability = pcom[:2] - c[:2]                                      #
+ 
+    w_pcomxy, w_pcomz   = W[0, 0],  W[1, 1]
+    w_vcomxy, w_vcomz   = W[2, 2],  W[3, 3]
+    w_c,      w_vcz     = W[4, 4],  W[5, 5]
+    w_theta,  w_v, w_w  = W[6, 6],  W[7, 7], W[8, 8]
+    w_a, w_ac_z, w_alpha = W[9, 9], W[10, 10], W[11, 11]
+    w_fcxy, w_fcz       = W[12, 12], W[13, 13]
+    w_eq                = W[14, 14]
+ 
+    sc_pcomxy = 0.5 * w_pcomxy * jnp.sum((pcom[:2] - x_ref[0:2]) ** 2)
+    sc_pcomz  = 0.5 * w_pcomz  *         (pcom[2]  - x_ref[2])   ** 2
+
+    sc_vcomxy = 0.5 * w_vcomxy * jnp.sum((vcom[:2] - x_ref[3:5]) ** 2)
+    sc_vcomz  = 0.5 * w_vcomz  *         (vcom[2]  - x_ref[5])   ** 2
+
+    sc_c      = 0.5 * w_c      * jnp.sum((c        - x_ref[6:9]) ** 2)
+    sc_vcz    = 0.5 * w_vcz    *         (vc_z     - x_ref[9])   ** 2
+
+    sc_theta  = 0.5 * w_theta  *         (theta    - x_ref[10])  ** 2
+    sc_v      = 0.5 * w_v      *         (v        - x_ref[11])  ** 2
+    sc_w      = 0.5 * w_w      *         (w        - x_ref[12])  ** 2
+
+    sc_a      = 0.5 * w_a      *         (a        - u_ref[0])   ** 2
+    sc_ac_z   = 0.5 * w_ac_z   *         (ac_z     - u_ref[1])   ** 2
+    sc_alpha  = 0.5 * w_alpha  *         (alpha    - u_ref[2])   ** 2
+
+    sc_flxy   = 0.5 * w_fcxy   * jnp.sum((fl[:2]   - u_ref[3:5]) ** 2)
+    sc_flz    = 0.5 * w_fcz    *         (fl[2]    - u_ref[5])   ** 2
+
+    sc_frxy   = 0.5 * w_fcxy   * jnp.sum((fr[:2]   - u_ref[6:8]) ** 2)
+    sc_frz    = 0.5 * w_fcz    *         (fr[2]    - u_ref[8])   ** 2
+
+    sc_contact = 0.5 * w_eq * h_contact ** 2
+    sc_moment  = 0.5 * w_eq * jnp.dot(h_moment, h_moment)
+    sc_hfz     = 0.5 * w_eq * h_fz
+
+    stage_cost = (
+        sc_pcomxy
+        + sc_pcomz
+        + sc_vcomxy
+        + sc_vcomz
+        + sc_c
+        + sc_vcz
+        + sc_theta
+        + sc_v
+        + sc_w
+        + sc_a
+        + sc_ac_z
+        + sc_alpha
+        + sc_flxy
+        + sc_flz
+        + sc_frxy
+        + sc_frz
+        + sc_contact
+        + sc_moment
+        + sc_hfz
+    )
+    
+    tc_pcomxy = 0.5 * w_pcomxy * jnp.sum((pcom[:2] - x_ref[0:2]) ** 2)
+    tc_pcomz  = 0.5 * w_pcomz  *         (pcom[2]  - x_ref[2])   ** 2
+
+    tc_vcomxy = 0.5 * w_vcomxy * jnp.sum((vcom[:2] - x_ref[3:5]) ** 2)
+    tc_vcomz  = 0.5 * w_vcomz  *         (vcom[2]  - x_ref[5])   ** 2
+
+    tc_c      = 0.5 * w_c      * jnp.sum((c        - x_ref[6:9]) ** 2)
+    tc_vcz    = 0.5 * w_vcz    *         (vc_z     - x_ref[9])   ** 2
+
+    tc_theta  = 0.5 * w_theta  *         (theta    - x_ref[10])  ** 2
+    tc_v      = 0.5 * w_v      *         (v        - x_ref[11])  ** 2
+    tc_w      = 0.5 * w_w      *         (w        - x_ref[12])  ** 2
+
+    tc_contact   = 0.5 * w_eq * h_contact ** 2
+    tc_stability = 0.5 * w_eq * jnp.dot(h_stability, h_stability)
+
+    term_cost = (
+        tc_pcomxy
+        + tc_pcomz
+        + tc_vcomxy
+        + tc_vcomz
+        + tc_c
+        + tc_vcz
+        + tc_theta
+        + tc_v
+        + tc_w
+        + tc_contact
+        + tc_stability
+    )
+
+    return jnp.where(t == N, term_cost, stage_cost)
+
+def wheeled_dfcip_hessian_gn(wheel_offset, N, W, reference, x, u, t):
+    w_diag = jnp.array([
+        W[0, 0], W[0, 0], W[1, 1],
+        W[2, 2], W[2, 2], W[3, 3],
+        W[4, 4], W[4, 4], W[4, 4],
+        W[5, 5], W[6, 6], W[7, 7], W[8, 8],
+        W[9, 9], W[10, 10], W[11, 11],
+        W[12, 12], W[12, 12], W[13, 13],      
+        W[12, 12], W[12, 12], W[13, 13],      
+        W[14, 14],                            
+        W[14, 14], W[14, 14], W[14, 14],
+        W[14, 14], W[14, 14],                 
+        W[14, 14], W[14, 14],
+    ])
+    W_res = jnp.diag(w_diag)
+ 
+    def residual(x, u):
+        pcom_, vcom_, c_ = x[0:3], x[3:6], x[6:9]
+        vc_z_, theta_, v_, w_ = x[9], x[10], x[11], x[12]
+        fl_, fr_ = u[3:6], u[6:9]
+ 
+        x_ref = reference[t, :13]
+        u_ref = reference[t, 13:22]
+ 
+        off = jnp.array([0.0, wheel_offset / 2.0, 0.0])
+        ct, st = jnp.cos(theta_), jnp.sin(theta_)
+        R = jnp.array([[ct, -st, 0.0], [st, ct, 0.0], [0.0, 0.0, 1.0]])
+        pl = c_ + R @ off
+        pr = c_ - R @ off
+ 
+        h_contact   = jnp.array([vc_z_])
+        h_moment    = jnp.cross(pl - pcom_, fl_) + jnp.cross(pr - pcom_, fr_)
+        h_fz        = jnp.array([jnp.minimum(fl_[2], 0.0), jnp.minimum(fr_[2], 0.0)])
+        h_stability = pcom_[:2] - c_[:2]
+ 
+        stage_res = jnp.concatenate([
+            pcom_ - x_ref[0:3],
+            vcom_ - x_ref[3:6],
+            c_    - x_ref[6:9],
+            jnp.array([vc_z_ - x_ref[9], theta_ - x_ref[10],
+                       v_ - x_ref[11],   w_ - x_ref[12]]),
+            u - u_ref,
+            h_contact,
+            h_moment,
+            h_fz,
+            jnp.zeros_like(h_stability),
+        ])
+ 
+        term_res = jnp.concatenate([
+            pcom_ - x_ref[0:3],
+            vcom_ - x_ref[3:6],
+            c_    - x_ref[6:9],
+            jnp.array([vc_z_ - x_ref[9], theta_ - x_ref[10],
+                       v_ - x_ref[11],   w_ - x_ref[12]]),
+            jnp.zeros(9),
+            h_contact,
+            jnp.zeros(3),
+            jnp.zeros(2),
+            h_stability,
+        ])
+ 
+        return jnp.where(t == N, term_res, stage_res)
+ 
+    Jx = jax.jacobian(residual, 0)(x, u)
+    Ju = jax.jacobian(residual, 1)(x, u)
+    
+    Lxx = Jx.T @ W_res @ Jx
+    Luu = Ju.T @ W_res @ Ju
+    Lxu = Jx.T @ W_res @ Ju
+    
+    return Lxx, Luu, Lxu
+
 def quadruped_srbd_obj(n_contact,N,W,reference,x, u, t):
 
     p = x[:3]

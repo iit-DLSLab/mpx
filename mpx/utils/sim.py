@@ -76,28 +76,38 @@ class KeyboardVelocityCommand:
         self,
         vx: float = 0.0,
         vy: float = 0.0,
+        vz: float = 0.0,
         wz: float = 0.0,
+        height: float = 0.4,
         forward_step: float = 0.1,
         yaw_step: float = 0.2,
+        height_step: float = 0.01,
         forward_limits: tuple[float, float] = (-1.0, 1.0),
         yaw_limits: tuple[float, float] = (-1.5, 1.5),
+        height_limits: tuple[float, float] = (0.3, 0.4),
     ):
         self.vx = float(vx)
         self.vy = float(vy)
+        self.vz = float(vz)
         self.wz = float(wz)
+        self.height = float(height)
         self.forward_step = float(forward_step)
         self.yaw_step = float(yaw_step)
+        self.height_step = float(height_step)
         self.forward_limits = tuple(float(value) for value in forward_limits)
         self.yaw_limits = tuple(float(value) for value in yaw_limits)
+        self.height_limits = tuple(float(value) for value in height_limits)
         self._overlay_dirty = True
 
     def _clip(self):
         self.vx = float(np.clip(self.vx, *self.forward_limits))
         self.wz = float(np.clip(self.wz, *self.yaw_limits))
+        self.height = float(np.clip(self.height, *self.height_limits))
 
     def reset(self):
         self.vx = 0.0
         self.vy = 0.0
+        self.vz = 0.0
         self.wz = 0.0
         self._overlay_dirty = True
 
@@ -116,6 +126,10 @@ class KeyboardVelocityCommand:
             self.wz += self.yaw_step
         elif key == glfw.KEY_RIGHT:
             self.wz -= self.yaw_step
+        elif key == glfw.KEY_PAGE_UP:
+            self.height += self.height_step
+        elif key == glfw.KEY_PAGE_DOWN:
+            self.height -= self.height_step
         elif key in (glfw.KEY_SPACE, glfw.KEY_ENTER, glfw.KEY_BACKSPACE):
             self.reset()
         else:
@@ -136,6 +150,15 @@ class KeyboardVelocityCommand:
             [self.vx, self.vy, 0.0, 0.0, 0.0, self.wz, robot_height],
             dtype=np.float64,
         )
+    
+    def mpc_wheeled_input(self, com_z_to_track: float | None = None) -> np.ndarray:
+        """Return the 4D locomotion command used wheeled MPC examples."""
+
+        height = self.height if com_z_to_track is None else float(com_z_to_track)
+        return np.array(
+            [self.vx, self.vz, self.wz, height],
+            dtype=np.float64,
+        )
 
     def overlay_text(self) -> tuple[str, str]:
         """Return short viewer text showing controls and the current command."""
@@ -152,6 +175,22 @@ class KeyboardVelocityCommand:
             return None
         self._overlay_dirty = False
         return self.overlay_text()
+
+    def overlay_text_dfcip(self) -> tuple[str, str]:
+        """Return viewer text for the wheeled DFCIP command."""
+
+        return (
+            "Up/Down: forward | Left/Right: yaw | Page Up/Down: height | Space: stop",
+            f"vx {self.vx:+.2f}  wz {self.wz:+.2f}  h {self.height:.2f}",
+        )
+
+    def consume_overlay_text_dfcip(self) -> tuple[str, str] | None:
+        """Return DFCIP overlay text only when the command was updated."""
+
+        if not self._overlay_dirty:
+            return None
+        self._overlay_dirty = False
+        return self.overlay_text_dfcip()
 
 
 def _reserve_user_geom(viewer) -> int:

@@ -14,9 +14,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "jax[cuda12]",
-    "mujoco",
-    "mujoco-mjx",
-    "trajax @ git+https://github.com/google/trajax"
+    "mujoco<3.10",
+    "mujoco-mjx<3.10",
+    "trajax @ git+https://github.com/google/trajax",
+    "qpax",
+    "flax",
+    "warp-lang<1.13"
 ]
 
 [project.urls]
@@ -32,8 +35,8 @@ platforms = ["linux-64"]
 [tool.pixi.dependencies]
 python = ">=3.10"
 jax = "*"
-mujoco = "*"
-mujoco-mjx = "*"
+mujoco = "<3.10"
+mujoco-mjx = "<3.10"
 ros-humble-desktop = "*"
 ros-humble-rmw-cyclonedds-cpp = "*"
 ros-humble-rosidl-generator-dds-idl = "*"
@@ -55,6 +58,7 @@ cuda = "12"
 trajax = { git = "https://github.com/google/trajax" }
 mpx = { path = ".", editable = true }
 readchar = "*"
+warp-lang = "<1.13"
 
 [tool.pixi.environments]
 default = { solve-group = "default" }

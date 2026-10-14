@@ -25,6 +25,45 @@ def _h1_contact_kinematics(mjx_model, mjx_data, contact_id, body_id):
     jacobian = jnp.concatenate([j_fl, j_rl, j_fr, j_rr], axis=1)
     return feet, jacobian
 
+def wheeled_dfcip_dynamics(mjx_model, mass, grav, dt, x, u, t, parameter) -> jax.Array:
+    pcom  = x[0:3]
+    dpcom = x[3:6]
+    c     = x[6:9] # virtual unicycle projected on the flat ground
+    vcz   = x[9]  # vertical velocity of the CoM
+    theta = x[10] # orientation, heading
+    v     = x[11] # velocity of c-point
+    omega = x[12] # angular velocity, dtheta
+    
+    a     = u[0] # CoM linear acceleration
+    acz   = u[1] # CoM vertical acceleration
+    alpha = u[2] # CoM angular acceleration
+    fl    = u[3:6] # Ground reaction force for the front left leg 
+    fr    = u[6:9] # Ground reaction force for the front right leg
+    
+    ddpcom = (fl + fr) / mass + jnp.array([0.0, 0.0, -jnp.absolute(grav)])
+    
+    dcx   = v * jnp.cos(theta)
+    dcy   = v * jnp.sin(theta)
+    dcz   = vcz
+    dvcz  = acz
+    dtheta = omega
+    dv     = a
+    domega = alpha
+
+    pcom_next  = pcom  + dt * dpcom
+    dpcom_next = dpcom + dt * ddpcom
+    c_next     = c     + dt * jnp.array([dcx, dcy, dcz])
+    vcz_next   = vcz   + dt * dvcz
+    theta_next = theta + dt * dtheta
+    v_next     = v     + dt * dv
+    omega_next = omega + dt * domega
+
+    return jnp.concatenate([
+        pcom_next,
+        dpcom_next,
+        c_next,
+        jnp.array([vcz_next, theta_next, v_next, omega_next]),
+    ])
 
 def quadruped_srbd_dynamics(mass, inertia,inertia_inv, dt, x, u, t,parameter):
     # Extract state variables
