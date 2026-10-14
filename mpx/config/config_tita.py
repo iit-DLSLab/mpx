@@ -16,9 +16,9 @@ body_name = ['left_leg_4', 'right_leg_4']
 
 simulation_frequency = 500
 whole_body_frequency = 100
-mpc_frequency = 100
-dt_mpc = 0.01
-N = 50
+mpc_frequency = 40
+dt_mpc = 0.025
+N = 12
 mpc_horizon_s = N * dt_mpc
 mpc_iterations = 1
 wbc_lookahead_dt = 0.0

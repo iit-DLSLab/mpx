@@ -197,7 +197,7 @@ class BatchedMPCControllerWrapper:
         c_world = (pl_world + pr_world) / 2.0
         vc_world = (dpl_world + dpr_world) / 2.0
 
-        diff = pl_world - pr_world
+        diff = centers[0] - centers[1]
         theta_wrapped = jnp.arctan2(-diff[0], diff[1])
         a = (theta_wrapped - theta_prev + jnp.pi) % (2 * jnp.pi)
         a = jnp.where(a < 0, a + 2 * jnp.pi, a) - jnp.pi
