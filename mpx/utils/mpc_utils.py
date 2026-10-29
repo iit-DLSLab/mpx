@@ -66,7 +66,7 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0
     dp_ref = jnp.tile(ref_lin_vel, (N+1, 1))
     omega_ref = jnp.tile(ref_ang_vel, (N+1, 1))
     foot_ref = jnp.tile(foot, (N+1, 1))
-    foot0_projected = jnp.tile(p, n_contact) + foot0 @ jax.scipy.linalg.block_diag(*([Ryaw] * n_contact)).T
+    foot_global_pos = jnp.tile(p, n_contact) + foot0 @ jax.scipy.linalg.block_diag(*([Ryaw] * n_contact)).T
     grf_ref = jnp.zeros((N+1, 3*n_contact))
 
     #Estimate Early contact
@@ -92,7 +92,7 @@ def reference_generator(use_terrain_estimator,N,dt,n_joints,n_contact,mass,foot0
         def calc_foothold(direction):
             f1 = 0.5*ref_lin_vel[direction]*duty_factor/step_freq
             f2 = jnp.sqrt(input[6]/9.81)*(dp[direction]-ref_lin_vel[direction])
-            f = f1 + f2 + foot0_projected[direction::3]
+            f = f1 + f2 + foot_global_pos[direction::3]
             return f
 
         foothold_x = calc_foothold(0)
@@ -174,7 +174,7 @@ def reference_generator_srbd(use_terrain_estimator,N,dt,n_contact,mass,foot0,t_t
     omega_ref = jnp.tile(ref_ang_vel, (N+1, 1))
     foot_ref = jnp.tile(foot, (N+1, 1))
     foot_ref_dot = jnp.zeros(((N+1), 3*n_contact))
-    foot0_projected = jnp.tile(p, n_contact) + foot0 @ jax.scipy.linalg.block_diag(*([Ryaw] * n_contact)).T
+    foot_global_pos = jnp.tile(p, n_contact) + foot0 @ jax.scipy.linalg.block_diag(*([Ryaw] * n_contact)).T
     grf_ref = jnp.zeros((N+1, 3*n_contact))
 
     #Estimate Early contact
@@ -200,7 +200,7 @@ def reference_generator_srbd(use_terrain_estimator,N,dt,n_contact,mass,foot0,t_t
         def calc_foothold(direction):
             f1 = 0.5*dp[direction]*duty_factor/step_freq
             f2 = jnp.sqrt(input[6]/9.81)*(dp[direction]-ref_lin_vel[direction])
-            f = f1 + f2 + foot0_projected[direction::3]
+            f = f1 + f2 + foot_global_pos[direction::3]
             return f
 
         foothold_x = calc_foothold(0)
